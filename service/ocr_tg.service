@@ -1,0 +1,23 @@
+[Unit]
+Description=OCR Telegram Bot (aiogram)
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/ocr_tg
+Environment=TELEGRAM_BOT_TOKEN=YOUR_TELEGRAM_TOKEN
+# Optional LLM envs
+Environment=LLM_PROVIDER=gigachat
+Environment=GIGACHAT_CREDENTIALS=YOUR_GIGACHAT_CREDENTIALS
+Environment=GIGACHAT_MODEL=GigaChat-2
+Environment=GEMINI_API_KEY=YOUR_GEMINI_API_KEY
+Environment=GEMINI_MODEL=gemini-1.5-flash
+Environment=OCR_LANG=rus
+ExecStart=/usr/bin/python3 /opt/ocr_tg/bot/aiogram_bot.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
