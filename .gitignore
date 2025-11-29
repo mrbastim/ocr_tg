@@ -1,0 +1,5 @@
+/.venv
+/bot/.env
+/bot/tmp
+
+/ocr/__pycache__/
