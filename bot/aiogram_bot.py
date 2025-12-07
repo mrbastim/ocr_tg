@@ -39,18 +39,23 @@ import urllib.error
 import time
 from pathlib import Path
 import re
+import json as _json
+import logging
+logger = logging.getLogger(__name__)
 
 API_BASE = os.getenv("AI_API_BASE") or os.getenv("GEMINI_API_BASE")  # например: https://your.server/api
+API_BASE_PATH = os.getenv("AI_API_BASE_PATH", "/api")  # базовый префикс, по умолчанию "/api"
 API_USERNAME = os.getenv("AI_API_USER") or os.getenv("GEMINI_API_USER")
 API_PASSWORD = os.getenv("AI_API_PASS") or os.getenv("GEMINI_API_PASS")
 API_JWT: str | None = None
+# Персональные JWT на пользователя Telegram (tg_id -> token)
+API_JWT_BY_USER: dict[int, str] = {}
+API_JWT_TS_BY_USER: dict[int, float] = {}  # unix timestamp получения токена
 API_DEBUG = os.getenv("AI_API_DEBUG", "0").lower() not in {"0", "false", "off"}
 API_LOG_DIR = Path(os.getenv("AI_API_LOG_DIR", os.path.join(os.getcwd(), "tmp")))
 API_LOG_FILE = API_LOG_DIR / "api_debug.log"
 
 def _api_log(event: str, **fields):
-    if not API_DEBUG:
-        return
     try:
         API_LOG_DIR.mkdir(parents=True, exist_ok=True)
         ts = time.strftime('%Y-%m-%d %H:%M:%S')
@@ -62,19 +67,255 @@ def _api_log(event: str, **fields):
             if len(text) > 1500:
                 text = text[:1500] + ' …<truncated>'
             parts.append(f"{k}={text}")
-        with open(API_LOG_FILE, 'a', encoding='utf-8') as f:
-            f.write(' | '.join(parts) + '\n')
+        line = ' | '.join(parts)
+        print(line)
+        if API_DEBUG:
+            with open(API_LOG_FILE, 'a', encoding='utf-8') as f:
+                f.write(line + '\n')
     except Exception:
         pass
 
-def api_login() -> bool:
+def _api_url(path: str) -> str:
+    base = API_BASE or ""
+    prefix = API_BASE_PATH or ""
+    # Нормализуем слеши
+    if prefix and not prefix.startswith("/"):
+        prefix = "/" + prefix
+    if base.endswith("/"):
+        base = base[:-1]
+    if path and not path.startswith("/"):
+        path = "/" + path
+    return f"{base}{prefix}{path}"
+
+def api_set_key(tg_id: int, username: str, provider: str, key: str) -> bool:
+    """Отправить ключ Gemini на сервер: POST /user/ai/key {api_key}."""
+    # На сервер отправляем только ключи для Gemini
+    if provider != "gemini":
+        _api_log('set_key_skip_local_only', provider=provider)
+        return False
+    if not API_BASE:
+        _api_log('set_key_skip', reason='no_base')
+        return False
+    jwt = API_JWT_BY_USER.get(tg_id)
+    ts = API_JWT_TS_BY_USER.get(tg_id, 0)
+    if jwt and (time.time() - ts > 3600):
+        _api_log('set_key_token_expired', tg_id=tg_id)
+        jwt = None
+    if not jwt:
+        # обеспечим регистрацию/логин
+        if not api_login(tg_id, username):
+            api_register(tg_id, username)
+            if not api_login(tg_id, username):
+                _api_log('set_key_auth_failed', tg_id=tg_id)
+                return False
+        jwt = API_JWT_BY_USER.get(tg_id)
+    url = _api_url("/user/ai/key")
+    payload = json.dumps({"api_key": key}).encode("utf-8")
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {jwt}"}
+    _api_log('set_key_request', url=url, body=payload.decode('utf-8'))
+    req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            body_raw = resp.read().decode("utf-8")
+            _api_log('set_key_response', status=getattr(resp, 'status', None), body=body_raw)
+            return True
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            _api_log('set_key_401_retry', tg_id=tg_id)
+            if api_login(tg_id, username):
+                jwt2 = API_JWT_BY_USER.get(tg_id)
+                headers["Authorization"] = f"Bearer {jwt2}"
+                req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+                try:
+                    with urllib.request.urlopen(req, timeout=15) as resp2:
+                        body_raw = resp2.read().decode("utf-8")
+                        _api_log('set_key_response_retry', status=getattr(resp2, 'status', None), body=body_raw)
+                        return True
+                except Exception as e2:
+                    _api_log('set_key_retry_error', error=e2)
+        try:
+            err_body = e.read().decode('utf-8')
+        except Exception:
+            err_body = str(e)
+        _api_log('set_key_http_error', code=e.code, body=err_body[:1500])
+        return False
+    except Exception as e:
+        _api_log('set_key_error', error=e)
+        return False
+
+def api_clear_key(tg_id: int, username: str, provider: str) -> bool:
+    """Удалить ключ Gemini у пользователя: DELETE /user/ai/key без тела."""
+    # На сервере храним только ключи для Gemini
+    if provider != "gemini":
+        _api_log('clear_key_skip_local_only', provider=provider)
+        return False
+    if not API_BASE:
+        _api_log('clear_key_skip', reason='no_base')
+        return False
+    jwt = API_JWT_BY_USER.get(tg_id)
+    ts = API_JWT_TS_BY_USER.get(tg_id, 0)
+    if jwt and (time.time() - ts > 3600):
+        _api_log('clear_key_token_expired', tg_id=tg_id)
+        jwt = None
+    if not jwt:
+        if not api_login(tg_id, username):
+            api_register(tg_id, username)
+            if not api_login(tg_id, username):
+                _api_log('clear_key_auth_failed', tg_id=tg_id)
+                return False
+        jwt = API_JWT_BY_USER.get(tg_id)
+    url = _api_url("/user/ai/key")
+    headers = {"Authorization": f"Bearer {jwt}"}
+    _api_log('clear_key_request', url=url)
+    req = urllib.request.Request(url, headers=headers, method="DELETE")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            body_raw = resp.read().decode("utf-8")
+            _api_log('clear_key_response', status=getattr(resp, 'status', None), body=body_raw)
+            return True
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            _api_log('clear_key_401_retry', tg_id=tg_id)
+            if api_login(tg_id, username):
+                jwt2 = API_JWT_BY_USER.get(tg_id)
+                headers["Authorization"] = f"Bearer {jwt2}"
+                req = urllib.request.Request(url, headers=headers, method="DELETE")
+                try:
+                    with urllib.request.urlopen(req, timeout=15) as resp2:
+                        body_raw = resp2.read().decode("utf-8")
+                        _api_log('clear_key_response_retry', status=getattr(resp2, 'status', None), body=body_raw)
+                        return True
+                except Exception as e2:
+                    _api_log('clear_key_retry_error', error=e2)
+        try:
+            err_body = e.read().decode('utf-8')
+        except Exception:
+            err_body = str(e)
+        _api_log('clear_key_http_error', code=e.code, body=err_body[:1500])
+        return False
+    except Exception as e:
+        _api_log('clear_key_error', error=e)
+        return False
+
+def api_key_status(tg_id: int, username: str) -> dict:
+    """Проверить наличие ключей: GET /user/ai/key -> {gigachat: bool, gemini: bool} (ожидаемый формат)."""
+    if not API_BASE:
+        _api_log('key_status_skip', reason='no_base')
+        return {}
+    jwt = API_JWT_BY_USER.get(tg_id)
+    ts = API_JWT_TS_BY_USER.get(tg_id, 0)
+    if jwt and (time.time() - ts > 3600):
+        _api_log('key_status_token_expired', tg_id=tg_id)
+        jwt = None
+    if not jwt:
+        if not api_login(tg_id, username):
+            api_register(tg_id, username)
+            if not api_login(tg_id, username):
+                _api_log('key_status_auth_failed', tg_id=tg_id)
+                return {}
+        jwt = API_JWT_BY_USER.get(tg_id)
+    url = _api_url("/user/ai/key")
+    headers = {"Authorization": f"Bearer {jwt}"}
+    _api_log('key_status_request', url=url)
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            body_raw = resp.read().decode("utf-8")
+            _api_log('key_status_response', status=getattr(resp, 'status', None), body=body_raw)
+            try:
+                data = json.loads(body_raw)
+                # Универсальный парсинг: ищем флаги в data/keys/success/data
+                result = {}
+                if isinstance(data, dict):
+                    # прямые поля
+                    for k in ("gemini", "gigachat"):
+                        if k in data and isinstance(data[k], (bool, int)):
+                            result[k] = bool(data[k])
+                    if isinstance(data.get("has_key"), (bool, int)):
+                        result["gemini"] = bool(data["has_key"])  # для простого эндпоинта одного ключа
+                    # вложенное data
+                    if isinstance(data.get("data"), dict):
+                        for k in ("gemini", "gigachat"):
+                            v = data["data"].get(k)
+                            if isinstance(v, (bool, int)):
+                                result[k] = bool(v)
+                        if isinstance(data["data"].get("has_key"), (bool, int)):
+                            result["gemini"] = bool(data["data"]["has_key"]) 
+                    # success.data
+                    if isinstance(data.get("success"), dict) and isinstance(data["success"].get("data"), dict):
+                        sd = data["success"]["data"]
+                        for k in ("gemini", "gigachat"):
+                            v = sd.get(k)
+                            if isinstance(v, (bool, int)):
+                                result[k] = bool(v)
+                        if isinstance(sd.get("has_key"), (bool, int)):
+                            result["gemini"] = bool(sd["has_key"]) 
+                return result
+            except Exception as e:
+                _api_log('key_status_parse_error', error=e)
+                return {}
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            _api_log('key_status_401_retry', tg_id=tg_id)
+            if api_login(tg_id, username):
+                jwt2 = API_JWT_BY_USER.get(tg_id)
+                headers["Authorization"] = f"Bearer {jwt2}"
+                req = urllib.request.Request(url, headers=headers, method="GET")
+                try:
+                    with urllib.request.urlopen(req, timeout=15) as resp2:
+                        body_raw = resp2.read().decode("utf-8")
+                        _api_log('key_status_response_retry', status=getattr(resp2, 'status', None), body=body_raw)
+                        try:
+                            data = json.loads(body_raw)
+                            return data if isinstance(data, dict) else {}
+                        except Exception:
+                            return {}
+                except Exception as e2:
+                    _api_log('key_status_retry_error', error=e2)
+        try:
+            err_body = e.read().decode('utf-8')
+        except Exception:
+            err_body = str(e)
+        _api_log('key_status_http_error', code=e.code, body=err_body[:1500])
+        return {}
+    except Exception as e:
+        _api_log('key_status_error', error=e)
+        return {}
+
+def api_register(tg_id: int, username: str) -> bool:
+    """Регистрация пользователя: POST /register {tg_id, username}."""
+    if not API_BASE:
+        return False
+    url = _api_url("/register")
+    payload = json.dumps({"tg_id": tg_id, "username": username}).encode("utf-8")
+    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+    _api_log('register_request', url=url, body=payload.decode('utf-8'))
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            body_raw = resp.read().decode("utf-8")
+            _api_log('register_response', status=getattr(resp, 'status', None), body=body_raw)
+            # Успешная регистрация не возвращает токен — просто True
+            return True
+    except urllib.error.HTTPError as e:
+        try:
+            err_body = e.read().decode('utf-8')
+        except Exception:
+            err_body = str(e)
+        _api_log('register_http_error', code=e.code, body=err_body[:1500])
+        return False
+    except Exception as e:
+        _api_log('register_error', error=e)
+        return False
+
+def api_login(tg_id: int, username: str) -> bool:
     """Логин на внешний сервер: отправляем JSON {username, password}, извлекаем JWT из разных возможных ключей."""
     global API_JWT
-    if not API_BASE or not API_USERNAME or not API_PASSWORD:
-        _api_log('login_skip', reason='missing_credentials', base=API_BASE, user=API_USERNAME)
+    if not API_BASE:
+        _api_log('login_skip', reason='no_base')
         return False
-    url = f"{API_BASE}/login"
-    payload_dict = {"username": API_USERNAME, "password": API_PASSWORD}
+    url = _api_url("/login")
+    # Согласно swagger: LoginRequest {tg_id, username}
+    payload_dict = {"tg_id": tg_id, "username": username}
     payload = json.dumps(payload_dict).encode("utf-8")
     headers = {"Content-Type": "application/json"}
     _api_log('login_request', url=url, body=payload.decode('utf-8'))
@@ -106,6 +347,9 @@ def api_login() -> bool:
                 if jwt_regex.match(s):
                     token_candidates.append(s)
             API_JWT = next(iter(token_candidates), None)
+            if API_JWT:
+                API_JWT_BY_USER[tg_id] = API_JWT
+                API_JWT_TS_BY_USER[tg_id] = time.time()
             _api_log('login_ok', token_present=API_JWT is not None, found=len(token_candidates))
             return API_JWT is not None
     except urllib.error.HTTPError as e:
@@ -119,18 +363,33 @@ def api_login() -> bool:
         _api_log('login_error', error=e)
         return False
 
-def api_ask_text(prompt: str) -> str:
+def api_ask_text(prompt: str, tg_id: int, username: str) -> str:
     if not API_BASE:
         _api_log('ask_skip', reason='no_base')
         return "[API NOT CONFIGURED] Set AI_API_BASE, AI_API_USER, AI_API_PASS"
-    if not API_JWT and not api_login():
-        _api_log('ask_auth_failed')
-        return "[API AUTH FAILED] Check AI_API_USER/AI_API_PASS"
-    url = f"{API_BASE}/user/ai/text"
+    jwt = API_JWT_BY_USER.get(tg_id)
+    # Проверка валидности 1 час
+    ts = API_JWT_TS_BY_USER.get(tg_id, 0)
+    if jwt and (time.time() - ts > 3600):
+        _api_log('token_expired', tg_id=tg_id)
+        jwt = None
+    if not jwt:
+        # Пытаемся логиниться, если 401 — пробуем регистрацию и снова логин
+        if not api_login(tg_id, username):
+            # Попробуем регистрацию
+            api_register(tg_id, username)
+            if not api_login(tg_id, username):
+                _api_log('ask_auth_failed', tg_id=tg_id)
+                return "[API AUTH FAILED]"
+        jwt = API_JWT_BY_USER.get(tg_id)
+    # если всё ещё нет токена
+    if not jwt:
+        return "[API AUTH FAILED]"
+    url = _api_url("/user/ai/text")
     payload = json.dumps({"prompt": prompt}).encode("utf-8")
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {API_JWT}",
+        "Authorization": f"Bearer {jwt}",
     }
     _api_log('ask_request', url=url, body=payload.decode('utf-8'))
     req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
@@ -162,6 +421,28 @@ def api_ask_text(prompt: str) -> str:
             # Не удалось найти — вернём JSON целиком (для отладки)
             return json.dumps(data, ensure_ascii=False)
     except urllib.error.HTTPError as e:
+        if e.code == 401:
+            # Пробуем перелогиниться и повторить один раз
+            _api_log('ask_401_retry', tg_id=tg_id)
+            if api_login(tg_id, username):
+                jwt = API_JWT_BY_USER.get(tg_id)
+                headers["Authorization"] = f"Bearer {jwt}"
+                req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+                try:
+                    with urllib.request.urlopen(req, timeout=30) as resp2:
+                        body_raw = resp2.read().decode("utf-8")
+                        _api_log('ask_raw_response_retry', status=getattr(resp2, 'status', None), body=body_raw)
+                        try:
+                            data = json.loads(body_raw)
+                        except Exception:
+                            return body_raw[:4000]
+                        if isinstance(data, dict) and isinstance(data.get("data"), dict) and isinstance(data["data"].get("text"), str):
+                            return data["data"]["text"]
+                        if isinstance(data, dict) and isinstance(data.get("text"), str):
+                            return data["text"]
+                        return json.dumps(data, ensure_ascii=False)
+                except Exception as e2:
+                    _api_log('ask_retry_error', error=e2)
         try:
             err = e.read().decode("utf-8")
         except Exception:
@@ -178,6 +459,43 @@ from aiogram.enums import ParseMode
 from aiogram.filters import Command
 from aiogram import BaseMiddleware
 from aiogram.exceptions import TelegramBadRequest
+
+# Хранилище пользовательских API-ключей (persist JSON)
+USER_KEYS_PATH = os.path.join(os.getcwd(), "tmp", "user_keys.json")
+
+def _load_user_keys() -> dict:
+    try:
+        with open(USER_KEYS_PATH, 'r', encoding='utf-8') as f:
+            return _json.load(f)
+    except Exception:
+        return {}
+
+def _save_user_keys(data: dict) -> None:
+    os.makedirs(os.path.dirname(USER_KEYS_PATH), exist_ok=True)
+    with open(USER_KEYS_PATH, 'w', encoding='utf-8') as f:
+        _json.dump(data, f, ensure_ascii=False, indent=2)
+
+def _get_user_key(user_id: int, provider: str) -> str | None:
+    data = _load_user_keys()
+    u = data.get(str(user_id), {})
+    return u.get(provider)
+
+def _set_user_key(user_id: int, provider: str, key: str) -> None:
+    data = _load_user_keys()
+    u = data.get(str(user_id)) or {}
+    u[provider] = key
+    data[str(user_id)] = u
+    _save_user_keys(data)
+
+def _del_user_key(user_id: int, provider: str) -> bool:
+    data = _load_user_keys()
+    u = data.get(str(user_id))
+    if not u or provider not in u:
+        return False
+    del u[provider]
+    data[str(user_id)] = u
+    _save_user_keys(data)
+    return True
 
 
 def gigachat_complete(prompt: str, api_key: Optional[str] = None) -> str:
@@ -223,9 +541,24 @@ def gemini_complete(prompt: str, api_key: Optional[str] = None, model_name: Opti
         return f"[LLM ERROR] {e}\n\n[LLM OUTPUT MOCK]\n{prompt[:200]}..."
 
 
-def external_api_complete(prompt: str) -> str:
+def external_api_complete(prompt: str, tg_id: int, username: str) -> str:
     """Вызов внешнего сервера: POST /user/ai/text с JWT."""
-    return api_ask_text(prompt)
+    return api_ask_text(prompt, tg_id=tg_id, username=username)
+
+def _ensure_gemini_key(tg_id: int, username: str) -> bool:
+    """Проверяет наличие ключа Gemini на сервере.
+    Если нет — пытается отправить локальный ключ пользователя на сервер и повторно проверяет.
+    """
+    status = api_key_status(tg_id, username)
+    if bool(status.get("gemini")):
+        return True
+    # Попробуем подтолкнуть локальный ключ на сервер
+    local_key = _get_user_key(tg_id, "gemini")
+    if local_key:
+        if api_set_key(tg_id, username, "gemini", local_key):
+            status2 = api_key_status(tg_id, username)
+            return bool(status2.get("gemini"))
+    return False
 
 
 def prompt_strategy_A(raw_text: str) -> str:
@@ -262,68 +595,97 @@ def run_llm_correction(text: str, strategy: str = "A", llm: str = "gigachat") ->
     Gemini теперь всегда через внешний сервер при наличии API_BASE (сервер сам общается с Gemini).
     Чтобы принудительно использовать локальный SDK Gemini, установите GEMINI_LOCAL=1.
     """
-    if strategy == "A":
-        prompt = prompt_strategy_A(text)
-    elif strategy == "B":
-        prompt = prompt_strategy_B(text)
-    else:
-        prompt = prompt_strategy_C(text)
+    # Оставляем только стратегию C
+    prompt = prompt_strategy_C(text)
     llm_choice = (llm or os.getenv("LLM_PROVIDER", "gigachat")).lower()
     force_local_gemini = os.getenv("GEMINI_LOCAL", "0").lower() in {"1", "true", "yes"}
     if llm_choice == "gemini":
         # Если есть внешний сервер — используем его (JWT); так выполняется требование работы через сервер.
         if API_BASE and not force_local_gemini:
-            return external_api_complete(prompt)
+            if not _ensure_gemini_key(_current_user_id, _current_username):
+                return "[GEMINI API KEY MISSING]\nОтправьте ключ через настройки: Ключ Gemini."
+            return external_api_complete(prompt, tg_id=_current_user_id, username=_current_username)
         # Иначе локальный SDK, если есть ключ
-        gemini_key = os.getenv("GEMINI_API_KEY")
+        # Сначала берём персональный ключ пользователя, затем системный
+        gemini_key = _get_user_key(_current_user_id, "gemini") or os.getenv("GEMINI_API_KEY")
         if gemini_key:
             return gemini_complete(prompt, api_key=gemini_key, model_name=os.getenv("GEMINI_MODEL"))
         if API_BASE:  # fallback ещё раз, вдруг force_local_gemini был включен но ключ отсутствует
             return external_api_complete(prompt)
         return "[GEMINI CONFIG MISSING] Set GEMINI_API_KEY or AI_API_BASE/AI_API_USER/AI_API_PASS"
     elif llm_choice in {"api", "gemini_api", "external"}:
-        return external_api_complete(prompt)
+        if not _ensure_gemini_key(_current_user_id, _current_username):
+            return "[GEMINI API KEY MISSING]\nОтправьте ключ через настройки: Ключ Gemini."
+        return external_api_complete(prompt, tg_id=_current_user_id, username=_current_username)
     else:
-        return gigachat_complete(prompt, api_key=os.getenv("GIGACHAT_CREDENTIALS"))
+        # Сначала берём персональный ключ пользователя, затем системный
+        giga_key = _get_user_key(_current_user_id, "gigachat") or os.getenv("GIGACHAT_CREDENTIALS")
+        return gigachat_complete(prompt, api_key=giga_key)
 
 
 _user_state: dict[int, dict] = {}
+_current_user_id: int = 0  # заполняется в хендлерах перед вызовами LLM
+_current_username: str = ""
 
 
 def _get_state(user_id: int) -> dict:
     st = _user_state.get(user_id)
     if not st:
         st = {
-            "strategy": "A",
+            "strategy": "C",
             "lang": os.getenv("OCR_LANG", "rus"),
             "llm": os.getenv("LLM_PROVIDER", "gigachat"),
             "debug": False,
+            "settings_open": False,
         }
         _user_state[user_id] = st
     return st
 
+def _token_status(user_id: int) -> tuple[bool, int]:
+    """Возвращает (валиден, оставшиеся_минуты)."""
+    jwt = API_JWT_BY_USER.get(user_id)
+    ts = API_JWT_TS_BY_USER.get(user_id, 0)
+    if not jwt or not ts:
+        return (False, 0)
+    age = time.time() - ts
+    if age > 3600:
+        return (False, 0)
+    remain = int((3600 - age) // 60)
+    return (True, max(remain, 0))
+
 
 def kb_main(user_id: int) -> InlineKeyboardMarkup:
     st = _get_state(user_id)
-    strat = st["strategy"]
+    def mark(label: str, active: bool) -> str:
+        return f"{label}{' ✅' if active else ''}"
+    # Главный экран: только стратегия C и кнопка настроек
+    valid, mins = _token_status(user_id)
+    login_text = "🔐 Вход ✅" if valid else "🔐 Вход"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="⚙️ Настройки", callback_data="open_settings"),
+            ],
+            [
+                InlineKeyboardButton(text=login_text, callback_data="do_login"),
+            ],
+        ]
+    )
+
+def kb_settings(user_id: int) -> InlineKeyboardMarkup:
+    st = _get_state(user_id)
     llm = st["llm"]
     lang = st["lang"]
     debug = st["debug"]
     def mark(label: str, active: bool) -> str:
         return f"{label}{' ✅' if active else ''}"
+    valid, mins = _token_status(user_id)
+    login_text = "🔐 Вход ✅" if valid else "🔐 Вход"
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text=mark("Стратегия A", strat == "A"), callback_data="set_strategy:A"),
-                InlineKeyboardButton(text=mark("Стратегия B", strat == "B"), callback_data="set_strategy:B"),
-                InlineKeyboardButton(text=mark("Стратегия C", strat == "C"), callback_data="set_strategy:C"),
-            ],
-            [
                 InlineKeyboardButton(text=mark("LLM: GigaChat", llm == "gigachat"), callback_data="set_llm:gigachat"),
-                InlineKeyboardButton(text=mark("LLM: Gemini", llm == "gemini"), callback_data="set_llm:gemini"),
-            ],
-            [
-                InlineKeyboardButton(text=mark("LLM: External API", llm in {"api", "gemini_api", "external"}), callback_data="set_llm:api"),
+                InlineKeyboardButton(text=mark("LLM: Gemini", llm == "gemini" or llm == "api"), callback_data="set_llm:gemini"),
             ],
             [
                 InlineKeyboardButton(text=mark("Язык: RU", lang == "rus"), callback_data="set_lang:rus"),
@@ -333,19 +695,34 @@ def kb_main(user_id: int) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text=mark("Debug", debug), callback_data="toggle_debug"),
             ],
             [
-                InlineKeyboardButton(text="Обновить меню", callback_data="refresh_menu"),
+                InlineKeyboardButton(text="🔑 Ключ GigaChat", callback_data="set_key:gigachat"),
+                InlineKeyboardButton(text="🔑 Ключ Gemini", callback_data="set_key:gemini"),
+            ],
+            [
+                InlineKeyboardButton(text="❌ Удалить GigaChat", callback_data="del_key:gigachat"),
+                InlineKeyboardButton(text="❌ Удалить Gemini", callback_data="del_key:gemini"),
+            ],
+            [
+                InlineKeyboardButton(text="📝 Регистрация", callback_data="do_register"),
+                InlineKeyboardButton(text=login_text, callback_data="do_login"),
+            ],
+            [
+                InlineKeyboardButton(text="⬅️ Назад", callback_data="close_settings"),
             ],
         ]
     )
 
 
 async def cmd_start(message: Message):
+    logger.debug(f"/start from={message.from_user.id} username={message.from_user.username}")
     st = _get_state(message.from_user.id)
+    valid, mins = _token_status(message.from_user.id)
+    ttl = f" | Token: {'валиден' if valid else 'нет'}{f' (~{mins} мин)' if valid else ''}"
     header = (
-        f"<b>Стратегия:</b> {st['strategy']}\n"
+        f"<b>Стратегия:</b> C\n"
         f"<b>LLM:</b> {st['llm']}\n"
         f"<b>Язык OCR:</b> {st['lang']}\n"
-        f"<b>Debug:</b> {'on' if st['debug'] else 'off'}"
+        f"<b>Debug:</b> {'on' if st['debug'] else 'off'}{ttl}"
     )
     await message.answer(
         header,
@@ -355,26 +732,31 @@ async def cmd_start(message: Message):
 
 
 async def cmd_help(message: Message):
+    logger.debug(f"/help from={message.from_user.id}")
     await message.answer(
         "/start — начать и выбрать стратегию\n"
-        "/strategy A|B|C — выбрать стратегию\n"
+        "/strategy C — выбрать стратегию\n"
         "/lang rus|eng — выбрать язык OCR\n"
         "/llm gigachat|gemini|api — выбрать провайдера LLM (api = внешний сервер)\n"
         "/debug on|off — включить/выключить вывод OCR и LLM\n"
         "/apilog — последние строки лога интеграции (AI_API_DEBUG=1)\n"
         "/testlogin — выполнить попытку логина и показать сырой ответ (AI_API_DEBUG рекомендуется)\n"
+        "/setkey <gigachat|gemini> <ключ> — сохранить личный API-ключ\n"
+        "/delkey <gigachat|gemini> — удалить личный API-ключ\n"
+        "/mykeys — показать, какие ключи сохранены (без самих значений)\n"
         "Пришлите фото/скан или документ для OCR и коррекции"
     )
 
 
 async def cmd_strategy(message: Message):
+    logger.debug(f"/strategy from={message.from_user.id} text={message.text}")
     args = (message.text or "").split()
     if len(args) < 2:
-        await message.answer("Укажите стратегию: A, B или C")
+        await message.answer("Укажите стратегию: C")
         return
     strategy = args[1].upper()
-    if strategy not in {"A", "B", "C"}:
-        await message.answer("Допустимые значения: A, B, C")
+    if strategy not in {"C"}:
+        await message.answer("Допустимое значение: C")
         return
     st = _get_state(message.from_user.id)
     st["strategy"] = strategy
@@ -382,6 +764,7 @@ async def cmd_strategy(message: Message):
 
 
 async def cmd_lang(message: Message):
+    logger.debug(f"/lang from={message.from_user.id} text={message.text}")
     args = (message.text or "").split()
     if len(args) < 2:
         await message.answer("Укажите язык: rus или eng")
@@ -399,6 +782,7 @@ async def cmd_lang(message: Message):
 
 
 async def cmd_llm(message: Message):
+    logger.debug(f"/llm from={message.from_user.id} text={message.text}")
     args = (message.text or "").split()
     if len(args) < 2:
         await message.answer("Укажите LLM: gigachat | gemini | api")
@@ -408,11 +792,63 @@ async def cmd_llm(message: Message):
         await message.answer("Допустимые значения: gigachat, gemini, api")
         return
     st = _get_state(message.from_user.id)
-    st["llm"] = llm
-    await message.answer(f"LLM провайдер установлен: {llm}", reply_markup=kb_main(message.from_user.id))
+    # Привязка Gemini к внешнему API: выбор gemini приводит к режиму api
+    st["llm"] = "api" if llm == "gemini" else llm
+    await message.answer(f"LLM провайдер установлен: {st['llm']}", reply_markup=kb_main(message.from_user.id))
+
+async def cmd_setkey(message: Message):
+    logger.debug(f"/setkey from={message.from_user.id} text_len={len(message.text or '')}")
+    args = (message.text or "").split(maxsplit=2)
+    if len(args) < 3 or args[1].lower() not in {"gigachat", "gemini"}:
+        await message.answer("Использование: /setkey <gigachat|gemini> <ключ>")
+        return
+    provider = args[1].lower()
+    key = args[2].strip()
+    # Всегда сохраняем локально
+    _set_user_key(message.from_user.id, provider, key)
+    if provider == "gemini":
+        uid = message.from_user.id
+        uname = (message.from_user.username or str(uid))
+        ok = api_set_key(uid, uname, provider, key)
+        if ok:
+            await message.answer(f"Ключ для {provider} сохранён на сервере и локально.")
+        else:
+            await message.answer(f"Ключ для {provider} сохранён локально. Сервер: ошибка, смотрите /apilog.")
+    else:
+        await message.answer(f"Ключ для {provider} сохранён локально.")
+
+async def cmd_delkey(message: Message):
+    logger.debug(f"/delkey from={message.from_user.id} text={message.text}")
+    args = (message.text or "").split(maxsplit=1)
+    if len(args) < 2 or args[1].lower() not in {"gigachat", "gemini"}:
+        await message.answer("Использование: /delkey <gigachat|gemini>")
+        return
+    provider = args[1].lower()
+    ok_local = _del_user_key(message.from_user.id, provider)
+    if provider == "gemini":
+        uid = message.from_user.id
+        uname = (message.from_user.username or str(uid))
+        ok = api_clear_key(uid, uname, provider)
+        await message.answer(f"Ключ для {provider} удалён локально и {'удалён на сервере' if ok else 'сервер: не найден/ошибка'}.")
+    else:
+        await message.answer(f"Ключ для {provider} {'удалён' if ok_local else 'не найден'} локально.")
+
+async def cmd_mykeys(message: Message):
+    logger.debug(f"/mykeys from={message.from_user.id}")
+    # GigaChat — локально, Gemini — сервер
+    local = _load_user_keys().get(str(message.from_user.id), {})
+    has_giga_local = '✅' if 'gigachat' in local else '—'
+    uid = message.from_user.id
+    uname = (message.from_user.username or str(uid))
+    status = api_key_status(uid, uname)
+    has_gem_srv = '✅' if bool(status.get('gemini')) else '—'
+    await message.answer(f"Ключи:\nGigaChat (локально): {has_giga_local}\nGemini (сервер): {has_gem_srv}")
 
 async def cmd_testlogin(message: Message):
-    ok = api_login()
+    logger.debug(f"/testlogin from={message.from_user.id} username={message.from_user.username}")
+    uid = message.from_user.id
+    uname = (message.from_user.username or str(uid))
+    ok = api_login(uid, uname)
     if ok:
         await message.answer("Логин успешен: токен получен.")
     else:
@@ -429,7 +865,21 @@ async def cmd_testlogin(message: Message):
         else:
             await message.answer("Логин неудачен. Включите AI_API_DEBUG=1 для деталей.")
 
+async def cmd_testregister(message: Message):
+    uid = message.from_user.id
+    uname = (message.from_user.username or str(uid))
+    ok = api_register(uid, uname)
+    if ok:
+        await message.answer("Регистрация выполнена. Пробую логин...")
+        if api_login(uid, uname):
+            await message.answer("Логин успешен: токен получен.")
+        else:
+            await message.answer("Логин неудачен. Используйте /apilog для подробностей.")
+    else:
+        await message.answer("Регистрация не удалась. Используйте /apilog для подробностей.")
+
 async def cmd_apilog(message: Message):
+    logger.debug(f"/apilog from={message.from_user.id}")
     if not API_DEBUG:
         await message.answer("Логирование отключено. Установите AI_API_DEBUG=1")
         return
@@ -438,15 +888,16 @@ async def cmd_apilog(message: Message):
         return
     try:
         with open(API_LOG_FILE, 'r', encoding='utf-8') as f:
-            lines = f.readlines()[-40:]
+            lines = f.readlines()[-10:]
         text = ''.join(lines)
         esc = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-        await message.answer(f"<b>API LOG (последние)</b>\n<pre>{esc}</pre>", parse_mode=ParseMode.HTML)
+        await message.answer(f"<b>API LOG (последние 10)</b>\n<pre>{esc}</pre>", parse_mode=ParseMode.HTML)
     except Exception as e:
         await message.answer(f"Ошибка чтения лога: {e}")
 
 
 async def cmd_debug(message: Message):
+    logger.debug(f"/debug from={message.from_user.id} text={message.text}")
     args = (message.text or "").split()
     if len(args) < 2 or args[1].lower() not in {"on", "off"}:
         await message.answer("Использование: /debug on|off")
@@ -460,20 +911,26 @@ async def cmd_debug(message: Message):
 
 
 async def on_btn(query: CallbackQuery):
+    logger.debug(f"on_btn from={query.from_user.id} data={query.data}")
     data = query.data or ""
     st = _get_state(query.from_user.id)
     edited = False
     if data.startswith("set_strategy:"):
-        _, val = data.split(":", 1)
-        strategy = val.upper()
-        if strategy in {"A", "B", "C"}:
-            st["strategy"] = strategy
-            edited = True
+        # Всегда C
+        st["strategy"] = "C"
+        edited = True
+    elif data == "open_settings":
+        st["settings_open"] = True
+        edited = True
+    elif data == "close_settings":
+        st["settings_open"] = False
+        edited = True
     elif data.startswith("set_llm:"):
         _, val = data.split(":", 1)
         llm = val.lower()
-        if llm in {"gigachat", "gemini", "api"}:
-            st["llm"] = llm
+        if llm in {"gigachat", "gemini"}:
+            # Привязка: gemini -> api
+            st["llm"] = "api" if llm == "gemini" else llm
             edited = True
     elif data.startswith("set_lang:"):
         _, val = data.split(":", 1)
@@ -483,24 +940,86 @@ async def on_btn(query: CallbackQuery):
     elif data == "toggle_debug":
         st["debug"] = not st["debug"]
         edited = True
-    elif data == "refresh_menu":
+    elif data == "do_login":
+        uid = query.from_user.id
+        uname = (query.from_user.username or str(uid))
+        # Если нет токена или истёк час — логинимся; если неудачно, пытаемся регистрировать
+        need_login = True
+        jwt = API_JWT_BY_USER.get(uid)
+        ts = API_JWT_TS_BY_USER.get(uid, 0)
+        if jwt and (time.time() - ts <= 3600):
+            need_login = False
+        if need_login:
+            if not api_login(uid, uname):
+                await query.message.answer("Логин неудачен, пробую регистрацию...")
+                if api_register(uid, uname) and api_login(uid, uname):
+                    valid, mins = _token_status(uid)
+                    await query.message.answer(f"Регистрация и вход выполнены. Токен ~{mins} мин.")
+                else:
+                    await query.message.answer("Не удалось выполнить вход. Проверьте /apilog.")
+            else:
+                valid, mins = _token_status(uid)
+                await query.message.answer(f"Вход выполнен: токен получен. Токен ~{mins} мин.")
+        else:
+            valid, mins = _token_status(uid)
+            await query.message.answer(f"Вы уже вошли. Токен ещё действителен (~{mins} мин).")
         edited = True
+    elif data == "do_register":
+        uid = query.from_user.id
+        uname = (query.from_user.username or str(uid))
+        ok = api_register(uid, uname)
+        if ok:
+            await query.message.answer("Регистрация выполнена. Пробую логин...")
+            if api_login(uid, uname):
+                await query.message.answer("Логин успешен: токен получен.")
+            else:
+                await query.message.answer("Логин неудачен. Проверьте логи через /apilog.")
+        else:
+            await query.message.answer("Регистрация не удалась. Проверьте логи через /apilog.")
+    elif data.startswith("set_key:"):
+        _, provider = data.split(":", 1)
+        if provider in {"gigachat", "gemini"}:
+            st.setdefault("await_key_provider", provider)
+            await query.message.answer(
+                f"Отправьте одним сообщением ключ для {provider}. Он будет сохранён как ваш личный."
+                + (" И отправлен на сервер." if provider == "gemini" else ""))
+    elif data.startswith("del_key:"):
+        _, provider = data.split(":", 1)
+        if provider in {"gigachat", "gemini"}:
+            uid = query.from_user.id
+            uname = (query.from_user.username or str(uid))
+            ok_local = _del_user_key(query.from_user.id, provider)
+            if provider == "gemini":
+                ok_srv = api_clear_key(uid, uname, provider)
+                await query.message.answer(
+                    f"Ключ для {provider} удалён локально и {'удалён на сервере' if ok_srv else 'сервер: не найден/ошибка'}.")
+            else:
+                await query.message.answer(
+                    f"Ключ для {provider} {'удалён' if ok_local else 'не найден'} локально.")
     if edited:
+        valid, mins = _token_status(query.from_user.id)
+        ttl = f" | Token: {'валиден' if valid else 'нет'}{f' (~{mins} мин)' if valid else ''}"
         header = (
-            f"<b>Стратегия:</b> {st['strategy']}\n"
+            f"<b>Стратегия:</b> C\n"
             f"<b>LLM:</b> {st['llm']}\n"
             f"<b>Язык OCR:</b> {st['lang']}\n"
-            f"<b>Debug:</b> {'on' if st['debug'] else 'off'}"
+            f"<b>Debug:</b> {'on' if st['debug'] else 'off'}{ttl}"
         )
-        await query.message.edit_text(
-            header,
-            reply_markup=kb_main(query.from_user.id),
-            parse_mode=ParseMode.HTML,
-        )
+        kb = kb_settings(query.from_user.id) if st.get("settings_open") else kb_main(query.from_user.id)
+        try:
+            await query.message.edit_text(
+                header,
+                reply_markup=kb,
+                parse_mode=ParseMode.HTML,
+            )
+        except TelegramBadRequest as e:
+            # Игнорируем "message is not modified" и подобные
+            logger.debug(f"edit_text skipped: {e}")
     await query.answer()
 
 
 async def on_photo(message: Message):
+    logger.debug(f"on_photo from={message.from_user.id} file_id={message.photo[-1].file_id}")
     photo = message.photo[-1]
     file = await message.bot.get_file(photo.file_id)
     tmp_dir = os.path.join(os.getcwd(), "tmp")
@@ -509,11 +1028,17 @@ async def on_photo(message: Message):
     await message.bot.download_file(file.file_path, local_path)
 
     st = _get_state(message.from_user.id)
+    global _current_user_id, _current_username
+    _current_user_id = message.from_user.id
+    _current_username = (message.from_user.username or str(message.from_user.id))
     lang = st['lang']
+    # Если пользователь прислал фото как ключ — игнорируем, ключ ожидается только как текст
     await message.answer(f"Выполняю OCR (язык {lang})...")
     try:
         raw = run_ocr(local_path, lang=lang)
+        logger.debug(f"OCR done len={len(raw)}")
     except Exception as e:
+        logger.exception("OCR error")
         await message.answer(f"Ошибка OCR: {e}")
         return
 
@@ -521,6 +1046,7 @@ async def on_photo(message: Message):
     llm = st['llm']
     await message.answer(f"Коррекция LLM (стратегия {strategy}, {llm})...")
     corrected = run_llm_correction(raw, strategy=strategy, llm=llm)
+    logger.debug(f"LLM corrected len={len(corrected)}")
 
     def safe_send(text: str):
         pm = ParseMode.MARKDOWN if strategy in {"B", "C"} else None
@@ -541,6 +1067,7 @@ async def on_photo(message: Message):
 
 
 async def on_document(message: Message):
+    logger.debug(f"on_document from={message.from_user.id} name={message.document.file_name} mime={message.document.mime_type}")
     doc = message.document
     file_name = doc.file_name or "document"
     mime = doc.mime_type or ""
@@ -551,6 +1078,9 @@ async def on_document(message: Message):
     await message.bot.download_file(file.file_path, local_path)
 
     st = _get_state(message.from_user.id)
+    global _current_user_id, _current_username
+    _current_user_id = message.from_user.id
+    _current_username = (message.from_user.username or str(message.from_user.id))
     lang = st['lang']
     if mime.startswith("image/"):
         await message.answer("Обнаружено изображение в документе. Выполняю OCR...")
@@ -617,12 +1147,42 @@ async def on_document(message: Message):
     else:
         await message.answer("Пока поддерживаются изображения (jpg/png) и PDF при наличии pdf2image.")
 
+async def on_text(message: Message):
+    logger.debug(f"on_text from={message.from_user.id} len={len(message.text or '')}")
+    # Перехватываем ввод ключа, если ожидается
+    st = _get_state(message.from_user.id)
+    provider = st.pop("await_key_provider", None)
+    if provider:
+        key = (message.text or "").strip()
+        if not key:
+            await message.answer("Пустой ключ — отправьте непустой текст.")
+            return
+        # Сохраняем локально и, если gemini, пробуем отправить на сервер
+        _set_user_key(message.from_user.id, provider, key)
+        if provider == "gemini":
+            uid = message.from_user.id
+            uname = (message.from_user.username or str(uid))
+            ok = api_set_key(uid, uname, provider, key)
+            if ok:
+                await message.answer(f"Ключ для {provider} сохранён на сервере и локально.")
+            else:
+                await message.answer(f"Ключ для {provider} сохранён локально. Сервер: ошибка, смотрите /apilog.")
+        else:
+            await message.answer(f"Ключ для {provider} сохранён локально.")
+        return
+    # Иначе игнор, можно добавить помощь
+
 
 async def main():
+    # Всегда включаем подробное логирование в терминал
+    logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.getLogger("aiogram").setLevel(logging.DEBUG)
+    logger.debug("Logger initialized")
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
         raise SystemExit("Не найден TELEGRAM_BOT_TOKEN в переменных окружения")
 
+    logger.debug("Creating Bot and Dispatcher")
     bot = Bot(token=token)
     dp = Dispatcher()
 
@@ -634,12 +1194,19 @@ async def main():
     dp.message.register(cmd_debug, F.text.startswith("/debug"))
     dp.message.register(cmd_apilog, F.text.startswith("/apilog"))
     dp.message.register(cmd_testlogin, F.text.startswith("/testlogin"))
+    dp.message.register(cmd_testregister, F.text.startswith("/testregister"))
+    dp.message.register(cmd_setkey, F.text.startswith("/setkey"))
+    dp.message.register(cmd_delkey, F.text.startswith("/delkey"))
+    dp.message.register(cmd_mykeys, F.text.startswith("/mykeys"))
 
     dp.callback_query.register(on_btn)
     dp.message.register(on_photo, F.photo)
     dp.message.register(on_document, F.document)
+    dp.message.register(on_text, F.text)
 
+    logger.debug("Start polling")
     await dp.start_polling(bot)
+    logger.debug("Polling stopped")
 
 
 if __name__ == "__main__":
