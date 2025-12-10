@@ -5,7 +5,7 @@ import logging
 from ocr.base import get_raw_text, normalize_whitespace
 
 from .user_keys import get_user_key
-from .api_client import API_BASE, api_ask_text, api_key_status, api_set_key
+from .api_client import API_BASE, api_ask_text, api_key_status, api_set_key, api_has_gemini_key_cached
 
 logger = logging.getLogger(__name__)
 
@@ -75,14 +75,23 @@ def external_api_complete(prompt: str, tg_id: int, username: str) -> str:
 
 
 def _ensure_gemini_key(tg_id: int, username: str) -> bool:
+    # Сначала смотрим кэш: если уже знаем, что ключ на сервере есть — не дергаем API.
+    cached = api_has_gemini_key_cached(tg_id)
+    if cached is True:
+        return True
+
+    # Если в кэше нет информации, один раз спрашиваем сервер.
     status = api_key_status(tg_id, username)
     if bool(status.get("gemini")):
         return True
+
+    # Ключа на сервере нет — пробуем отправить локальный, если он сохранен.
     local_key = get_user_key(tg_id, "gemini")
     if local_key:
+        # api_set_key при успехе сам обновит кэш API_HAS_GEMINI_KEY, поэтому
+        # отдельный повторный запрос статуса не нужен.
         if api_set_key(tg_id, username, "gemini", local_key):
-            status2 = api_key_status(tg_id, username)
-            return bool(status2.get("gemini"))
+            return True
     return False
 
 

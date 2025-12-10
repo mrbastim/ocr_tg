@@ -11,3 +11,7 @@ pdf2image
 # LLM провайдеры
 google-generativeai
 gigachat
+
+# Тестирование backend API
+pytest
+requests

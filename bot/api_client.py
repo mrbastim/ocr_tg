@@ -17,6 +17,7 @@ API_PASSWORD = os.getenv("AI_API_PASS") or os.getenv("GEMINI_API_PASS")
 API_JWT: Optional[str] = None
 API_JWT_BY_USER: Dict[int, str] = {}
 API_JWT_TS_BY_USER: Dict[int, float] = {}
+API_HAS_GEMINI_KEY: Dict[int, bool] = {}
 API_DEBUG = os.getenv("AI_API_DEBUG", "0").lower() not in {"0", "false", "off"}
 API_LOG_DIR = Path(os.getenv("AI_API_LOG_DIR", os.path.join(os.getcwd(), "tmp")))
 API_LOG_FILE = API_LOG_DIR / "api_debug.log"
@@ -232,6 +233,7 @@ def api_set_key(tg_id: int, username: str, provider: str, key: str) -> bool:
         with urllib.request.urlopen(req, timeout=15) as resp:
             body_raw = resp.read().decode("utf-8")
             _api_log("set_key_response", status=getattr(resp, "status", None), body=body_raw)
+            API_HAS_GEMINI_KEY[tg_id] = True
             return True
     except urllib.error.HTTPError as e:
         if e.code == 401:
@@ -244,6 +246,7 @@ def api_set_key(tg_id: int, username: str, provider: str, key: str) -> bool:
                     with urllib.request.urlopen(req, timeout=15) as resp2:
                         body_raw = resp2.read().decode("utf-8")
                         _api_log("set_key_response_retry", status=getattr(resp2, "status", None), body=body_raw)
+                        API_HAS_GEMINI_KEY[tg_id] = True
                         return True
                 except Exception as e2:
                     _api_log("set_key_retry_error", error=e2)
@@ -276,6 +279,7 @@ def api_clear_key(tg_id: int, username: str, provider: str) -> bool:
         with urllib.request.urlopen(req, timeout=15) as resp:
             body_raw = resp.read().decode("utf-8")
             _api_log("clear_key_response", status=getattr(resp, "status", None), body=body_raw)
+            API_HAS_GEMINI_KEY.pop(tg_id, None)
             return True
     except urllib.error.HTTPError as e:
         if e.code == 401:
@@ -288,6 +292,7 @@ def api_clear_key(tg_id: int, username: str, provider: str) -> bool:
                     with urllib.request.urlopen(req, timeout=15) as resp2:
                         body_raw = resp2.read().decode("utf-8")
                         _api_log("clear_key_response_retry", status=getattr(resp2, "status", None), body=body_raw)
+                        API_HAS_GEMINI_KEY.pop(tg_id, None)
                         return True
                 except Exception as e2:
                     _api_log("clear_key_retry_error", error=e2)
@@ -341,6 +346,12 @@ def api_key_status(tg_id: int, username: str) -> Dict[str, bool]:
                                 result[k] = bool(v)
                         if isinstance(sd.get("has_key"), (bool, int)):
                             result["gemini"] = bool(sd["has_key"]) 
+                # обновляем кэш наличия ключа Gemini на сервере
+                if "gemini" in result:
+                    if result["gemini"]:
+                        API_HAS_GEMINI_KEY[tg_id] = True
+                    else:
+                        API_HAS_GEMINI_KEY.pop(tg_id, None)
                 return result
             except Exception as e:
                 _api_log("key_status_parse_error", error=e)
@@ -355,3 +366,11 @@ def api_key_status(tg_id: int, username: str) -> Dict[str, bool]:
     except Exception as e:
         _api_log("key_status_error", error=e)
         return {}
+
+
+def api_has_gemini_key_cached(tg_id: int) -> Optional[bool]:
+    """Вернуть кэшированный признак наличия ключа Gemini на сервере для пользователя.
+
+    None означает, что информации в кэше нет.
+    """
+    return API_HAS_GEMINI_KEY.get(tg_id)
