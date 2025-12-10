@@ -72,8 +72,9 @@ def test_gemini_key_lifecycle():
     resp_status = requests.get(url_key, headers=headers, timeout=10)
     assert resp_status.status_code == 200, resp_status.text
     data_status = resp_status.json()
-    # Итоговый API: {"has_key": bool}
-    assert "has_key" in data_status and isinstance(data_status["has_key"], bool)
+    # Фактический API: {"data": {"has_key": bool}, "status": "success"}
+    assert isinstance(data_status.get("data"), dict)
+    assert isinstance(data_status["data"].get("has_key"), bool)
 
     # устанавливаем тестовый ключ
     test_key = "test-gemini-key-for-ci"
@@ -84,7 +85,8 @@ def test_gemini_key_lifecycle():
     resp_status2 = requests.get(url_key, headers=headers, timeout=10)
     assert resp_status2.status_code == 200, resp_status2.text
     data_status2 = resp_status2.json()
-    assert data_status2.get("has_key") is True
+    assert isinstance(data_status2.get("data"), dict)
+    assert data_status2["data"].get("has_key") is True
 
     # удаляем ключ
     resp_del = requests.delete(url_key, headers=headers, timeout=10)
@@ -94,7 +96,8 @@ def test_gemini_key_lifecycle():
     resp_status3 = requests.get(url_key, headers=headers, timeout=10)
     assert resp_status3.status_code == 200, resp_status3.text
     data_status3 = resp_status3.json()
-    assert data_status3.get("has_key") is False
+    assert isinstance(data_status3.get("data"), dict)
+    assert data_status3["data"].get("has_key") is False
 
 
 def test_ai_text_generation_optional():

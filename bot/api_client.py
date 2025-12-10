@@ -324,10 +324,12 @@ def api_key_status(tg_id: int, username: str) -> Dict[str, bool]:
             _api_log("key_status_response", status=getattr(resp, "status", None), body=body_raw)
             try:
                 data = json.loads(body_raw)
-                # Итоговый формат backend: {"has_key": true/false}
+                # Фактический формат backend: {"data": {"has_key": bool}, "status": "success"}
                 result: Dict[str, bool] = {}
-                if isinstance(data, dict) and isinstance(data.get("has_key"), (bool, int)):
-                    result["gemini"] = bool(data["has_key"])
+                if isinstance(data, dict) and isinstance(data.get("data"), dict):
+                    has_key_val = data["data"].get("has_key")
+                    if isinstance(has_key_val, (bool, int)):
+                        result["gemini"] = bool(has_key_val)
 
                 # обновляем кэш наличия ключа Gemini на сервере
                 if "gemini" in result:
