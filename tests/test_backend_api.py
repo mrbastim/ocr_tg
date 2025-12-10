@@ -33,7 +33,10 @@ def _login_token(tg_id: int, username: str) -> str:
     resp = requests.post(url, json={"tg_id": tg_id, "username": username}, timeout=10)
     assert resp.status_code == 200, resp.text
     data = resp.json()
-    token = data.get("token")
+    # Согласно текущему backend, успешный ответ логина имеет вид
+    # {"data": {"token": "..."}, "status": "success"}
+    assert isinstance(data.get("data"), dict), data
+    token = data["data"].get("token")
     assert isinstance(token, str) and token, data
     return token
 
