@@ -324,7 +324,7 @@ def api_key_status(tg_id: int, username: str) -> Dict[str, bool]:
             _api_log("key_status_response", status=getattr(resp, "status", None), body=body_raw)
             try:
                 data = json.loads(body_raw)
-                # Согласно текущему backend, ответ имеет вид {"has_key": true/false}
+                # Итоговый формат backend: {"has_key": true/false}
                 result: Dict[str, bool] = {}
                 if isinstance(data, dict) and isinstance(data.get("has_key"), (bool, int)):
                     result["gemini"] = bool(data["has_key"])

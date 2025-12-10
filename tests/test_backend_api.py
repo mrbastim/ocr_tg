@@ -72,7 +72,7 @@ def test_gemini_key_lifecycle():
     resp_status = requests.get(url_key, headers=headers, timeout=10)
     assert resp_status.status_code == 200, resp_status.text
     data_status = resp_status.json()
-    # по swagger ожидается поле has_key: bool
+    # Итоговый API: {"has_key": bool}
     assert "has_key" in data_status and isinstance(data_status["has_key"], bool)
 
     # устанавливаем тестовый ключ
