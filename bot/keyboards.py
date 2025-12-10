@@ -18,6 +18,7 @@ def get_state(user_id: int) -> Dict:
             "llm": os.getenv("LLM_PROVIDER", "gigachat"),
             "debug": False,
             "settings_open": False,
+            "has_gemini": False,
         }
         _user_state[user_id] = st
     return st
@@ -54,6 +55,7 @@ def kb_settings(user_id: int) -> InlineKeyboardMarkup:
     llm = st["llm"]
     lang = st["lang"]
     debug = st["debug"]
+    has_gemini = bool(st.get("has_gemini"))
 
     def mark(label: str, active: bool) -> str:
         return f"{label}{' ✅' if active else ''}"
@@ -76,7 +78,10 @@ def kb_settings(user_id: int) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text=mark("Debug", debug), callback_data="toggle_debug")],
             [
                 InlineKeyboardButton(text="🔑 Ключ GigaChat", callback_data="set_key:gigachat"),
-                InlineKeyboardButton(text="🔑 Ключ Gemini", callback_data="set_key:gemini"),
+                InlineKeyboardButton(
+                    text=f"🔑 Ключ Gemini {'✅' if has_gemini else '❌'}",
+                    callback_data="set_key:gemini",
+                ),
             ],
             [
                 InlineKeyboardButton(text="❌ Удалить GigaChat", callback_data="del_key:gigachat"),

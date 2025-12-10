@@ -256,6 +256,12 @@ async def on_btn(query: CallbackQuery):
         else:
             valid, mins = token_status(uid)
             await query.message.answer(f"Вы уже вошли. Токен ещё действителен (~{mins} мин).")
+        # после входа (или при уже валидном токене) проверяем наличие ключа Gemini на сервере
+        try:
+            status = api_key_status(uid, uname)
+            st["has_gemini"] = bool(status.get("gemini"))
+        except Exception as e:
+            logger.debug(f"key_status check failed: {e}")
         edited = True
     elif data == "do_register":
         uid = query.from_user.id
@@ -285,6 +291,7 @@ async def on_btn(query: CallbackQuery):
             ok_local = delete_user_key(uid, provider)
             if provider == "gemini":
                 ok_srv = api_clear_key(uid, uname, provider)
+                st["has_gemini"] = False
                 await query.message.answer(
                     f"Ключ для {provider} удалён локально и {'удалён на сервере' if ok_srv else 'сервер: не найден/ошибка'}."
                 )
@@ -465,6 +472,7 @@ async def on_text(message: Message):
             uname = message.from_user.username or str(uid)
             ok = api_set_key(uid, uname, provider, key)
             if ok:
+                st["has_gemini"] = True
                 await message.answer("Ключ для gemini сохранён на сервере и локально.")
             else:
                 await message.answer("Ключ для gemini сохранён локально. Сервер: ошибка, смотрите /apilog.")
