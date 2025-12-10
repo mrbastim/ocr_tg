@@ -324,28 +324,11 @@ def api_key_status(tg_id: int, username: str) -> Dict[str, bool]:
             _api_log("key_status_response", status=getattr(resp, "status", None), body=body_raw)
             try:
                 data = json.loads(body_raw)
+                # Согласно текущему backend, ответ имеет вид {"has_key": true/false}
                 result: Dict[str, bool] = {}
-                if isinstance(data, dict):
-                    for k in ("gemini", "gigachat"):
-                        if k in data and isinstance(data[k], (bool, int)):
-                            result[k] = bool(data[k])
-                    if isinstance(data.get("has_key"), (bool, int)):
-                        result["gemini"] = bool(data["has_key"])
-                    if isinstance(data.get("data"), dict):
-                        for k in ("gemini", "gigachat"):
-                            v = data["data"].get(k)
-                            if isinstance(v, (bool, int)):
-                                result[k] = bool(v)
-                        if isinstance(data["data"].get("has_key"), (bool, int)):
-                            result["gemini"] = bool(data["data"]["has_key"])  
-                    if isinstance(data.get("success"), dict) and isinstance(data["success"].get("data"), dict):
-                        sd = data["success"]["data"]
-                        for k in ("gemini", "gigachat"):
-                            v = sd.get(k)
-                            if isinstance(v, (bool, int)):
-                                result[k] = bool(v)
-                        if isinstance(sd.get("has_key"), (bool, int)):
-                            result["gemini"] = bool(sd["has_key"]) 
+                if isinstance(data, dict) and isinstance(data.get("has_key"), (bool, int)):
+                    result["gemini"] = bool(data["has_key"])
+
                 # обновляем кэш наличия ключа Gemini на сервере
                 if "gemini" in result:
                     if result["gemini"]:
