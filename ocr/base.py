@@ -2,11 +2,11 @@ import cv2
 import pytesseract
 import os
 
-# Настройка пути к Tesseract (если Windows)
-pytesseract.pytesseract.tesseract_cmd = r"D:\tesseract-ocr\tesseract.exe"
-
-# Явно указываем путь к языковым данным
-os.environ['TESSDATA_PREFIX'] = r"D:\tesseract-ocr\tessdata"
+# Настройка путей к Tesseract только под Windows.
+# В Docker (Linux) используется системный бинарник из образа и TESSDATA_PREFIX из ENV.
+if os.name == "nt":
+    pytesseract.pytesseract.tesseract_cmd = r"D:\\tesseract-ocr\\tesseract.exe"
+    os.environ["TESSDATA_PREFIX"] = r"D:\\tesseract-ocr\\tessdata"
 
 def get_raw_text(image_path, lang='rus'):
     img = cv2.imread(image_path)
