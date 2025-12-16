@@ -7,4 +7,7 @@ services:
     restart: unless-stopped
     env_file:
       - ./bot/.env
+    volumes:
+      # Общая папка для логов и моделей ML между ботом и Jenkins/batch_import
+      - ./ml_output:/app/ml_output
     # При необходимости укажи URL бэкенда в .env (AI_API_BASE и т.п.)
