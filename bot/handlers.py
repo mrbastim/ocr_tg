@@ -1,5 +1,6 @@
 import os
 import logging
+import asyncio
 from typing import Tuple
 
 from aiogram import F
@@ -12,6 +13,21 @@ from .api_client import API_DEBUG, API_LOG_FILE, api_login, api_register, api_ke
 from .user_keys import set_user_key, delete_user_key, get_all_user_keys
 from .keyboards import get_state, kb_main, kb_settings, token_status
 from .llm_service import run_ocr, run_llm_correction
+
+try:
+    from ml.train_models import run_all as ml_run_all
+except Exception:
+    ml_run_all = None
+
+try:
+    from ml.doc_classifier import classify_document_text
+except Exception:
+    classify_document_text = None
+
+try:
+    from ml.processing_regression import build_processing_summary
+except Exception:
+    build_processing_summary = None
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +59,97 @@ async def cmd_help(message: Message):
         "/setkey <gigachat|gemini> <ключ> — сохранить личный API-ключ\n"
         "/delkey <gigachat|gemini> — удалить личный API-ключ\n"
         "/mykeys — показать, какие ключи сохранены\n"
+        "/ml_demo — запустить учебный ML-эксперимент на текстовых документах\n"
+        "/ml_requirements — показать, как ML-подпроект закрывает пункты 3–6 задания\n"
         "Пришлите фото/скан или документ для OCR и коррекции",
     )
+
+
+async def cmd_ml_demo(message: Message):
+    logger.debug(f"/ml_demo from={message.from_user.id}")
+    if ml_run_all is None:
+        await message.answer("ML-модуль недоступен на этом развёртывании.")
+        return
+
+    await message.answer(
+        "Запускаю учебный ML-эксперимент на текстовом датасете "
+        "(20 Newsgroups). Это может занять некоторое время..."
+    )
+
+    loop = asyncio.get_running_loop()
+    try:
+        metrics = await loop.run_in_executor(None, ml_run_all, None, None)
+    except Exception as e:
+        logger.exception("ML demo failed")
+        await message.answer(f"Ошибка при выполнении ML-демо: {e}")
+        return
+
+    def fmt(v):
+        try:
+            return f"{float(v):.3f}"
+        except Exception:
+            return "—"
+
+    reg = metrics.get("regression", {})
+    cls = metrics.get("classification", {})
+    clu = metrics.get("clustering", {})
+
+    lines = [
+        "Учебный ML-эксперимент завершён.",
+        f"Объектов: {metrics.get('n_samples')} | Признаков: {metrics.get('n_features')}",
+        "",
+        "Регрессия (длина документа в словах):",
+        f"R² = {fmt(reg.get('r2'))}, MAE = {fmt(reg.get('mae'))}, MSE = {fmt(reg.get('mse'))}",
+        "",
+        "Классификация (тематика документа):",
+    ]
+
+    for name, m in cls.items():
+        lines.append(f"{name}: accuracy = {fmt(m.get('acc'))}, F1 = {fmt(m.get('f1'))}")
+
+    lines.extend(
+        [
+            "",
+            "Кластеризация (k-means по тем же признакам):",
+            f"k = {clu.get('k')}, silhouette = {fmt(clu.get('silhouette'))}, ARI = {fmt(clu.get('ari'))}",
+            "",
+            "Графики (распределения ошибок, сравнение моделей, кластеры) и сохранённые модели",
+            "лежат в папке ml_output/ на сервере.",
+        ]
+    )
+
+    await message.answer("\n".join(lines))
+
+
+async def cmd_ml_requirements(message: Message):
+    logger.debug(f"/ml_requirements from={message.from_user.id}")
+    text = (
+        "3. Визуализация результатов моделирования (графики, диаграммы, таблицы).\n"
+        "   • В модуле ml/train_models.py при запуске /ml_demo строятся и сохраняются графики:\n"
+        "     - regression_scatter.png, regression_errors_hist.png — регрессия (ошибки и предсказания),\n"
+        "     - classification_models.png — сравнение моделей классификации по accuracy и F1,\n"
+        "     - clustering_kmeans.png — визуализация кластеров (k-means + PCA).\n"
+        "\n"
+        "4. Документированный и структурированный код.\n"
+        "   • Код ML-подпроекта разнесён по модулям: ml/train_models.py, ml/doc_classifier.py, ml/processing_regression.py.\n"
+        "   • В файлах используются docstring-и и комментарии, описывающие назначение функций и шаги обработки.\n"
+        "\n"
+        "5. Оценка качества моделей и сравнительный анализ.\n"
+        "   • /ml_demo выводит метрики:\n"
+        "     - для регрессии: R², MAE, MSE;\n"
+        "     - для классификации: accuracy и F1 для LogReg, SVM, MLP с сравнением по лучшей модели;\n"
+        "     - для кластеризации: silhouette и Adjusted Rand Index (ARI).\n"
+        "   • Эти метрики позволяют сравнить точность и выбрать наиболее подходящую модель.\n"
+        "\n"
+        "6. Подробный отчёт о проделанной работе.\n"
+        "   • В качестве отчёта можно использовать связку: /ml_demo + данный текст:\n"
+        "     - описание датасета (20 Newsgroups, текстовые документы),\n"
+        "     - перечисление использованных моделей (регрессия, LogReg, SVM, MLP, k-means),\n"
+        "     - обоснование: показаны разные типы задач (регрессия, классификация, кластеризация) для документов,\n"
+        "       а также их сравнение по метрикам.\n"
+        "   • При необходимости этот текст можно перенести в отчёт (PDF/Docx) и дополнить скриншотами графиков.\n"
+    )
+    await message.answer(text)
 
 
 async def cmd_strategy(message: Message):
@@ -206,6 +311,33 @@ async def cmd_debug(message: Message):
     await message.answer(f"Debug: {'on' if st['debug'] else 'off'}", reply_markup=kb_main(message.from_user.id))
 
 
+def _build_extra_info(image_path: str | None, raw_text: str) -> str:
+    """Собрать дополнительную строку для ответа: тип документа и время обработки."""
+
+    parts = []
+
+    if classify_document_text and raw_text and raw_text.strip():
+        try:
+            label, _ = classify_document_text(raw_text)
+            label_map = {
+                "receipt": "чек / кассовый документ",
+                "screenshot": "скриншот экрана",
+                "document": "скан документа / текста",
+            }
+            human = label_map.get(label, label)
+            parts.append(f"Тип изображения (по тексту): {human}")
+        except Exception as e:
+            logger.debug(f"doc_type classification failed: {e}")
+
+    if build_processing_summary:
+        try:
+            parts.append(build_processing_summary(image_path, raw_text))
+        except Exception as e:
+            logger.debug(f"processing summary failed: {e}")
+
+    return "\n".join(parts) if parts else ""
+
+
 async def on_btn(query: CallbackQuery):
     logger.debug(f"on_btn from={query.from_user.id} data={query.data}")
     data = query.data or ""
@@ -299,6 +431,8 @@ async def on_btn(query: CallbackQuery):
                 await query.message.answer(
                     f"Ключ для {provider} {'удалён' if ok_local else 'не найден'} локально."
                 )
+    elif data == "ml_requirements":
+        await cmd_ml_requirements(query.message)
 
     if edited:
         valid, mins = token_status(query.from_user.id)
@@ -340,8 +474,20 @@ async def on_photo(message: Message):
     strategy = st["strategy"]
     llm = st["llm"]
     await message.answer(f"Коррекция LLM (стратегия {strategy}, {llm})...")
-    corrected = run_llm_correction(raw, strategy=strategy, llm=llm, user_id=message.from_user.id, username=message.from_user.username or str(message.from_user.id))
+    corrected = run_llm_correction(
+        raw,
+        strategy=strategy,
+        llm=llm,
+        user_id=message.from_user.id,
+        username=message.from_user.username or str(message.from_user.id),
+    )
     logger.debug(f"LLM corrected len={len(corrected)}")
+
+    extra = _build_extra_info(local_path, raw)
+    if extra:
+        full_text = f"{corrected}\n\n{extra}"
+    else:
+        full_text = corrected
 
     async def safe_send(text: str):
         pm = ParseMode.MARKDOWN if strategy in {"B", "C"} else None
@@ -356,9 +502,9 @@ async def on_photo(message: Message):
 
         ocr_part = html_escape(raw)[:3500]
         await message.answer(f"<b>OCR ({lang})</b>\n<pre>{ocr_part}</pre>", parse_mode=ParseMode.HTML)
-        await safe_send(corrected)
+        await safe_send(full_text)
     else:
-        await safe_send(corrected)
+        await safe_send(full_text)
 
 
 async def on_document(message: Message):
@@ -400,15 +546,18 @@ async def on_document(message: Message):
             user_id=message.from_user.id,
             username=message.from_user.username or str(message.from_user.id),
         )
+        extra = _build_extra_info(local_path, raw)
+        full_text = f"{corrected}\n\n{extra}" if extra else corrected
         if st["debug"]:
             def html_escape(s: str) -> str:
                 return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-            ocr_part = html_escape(raw)[:3500]
-            await message.answer(f"<b>OCR ({lang})</b>\n<pre>{ocr_part}</pre>", parse_mode=ParseMode.HTML)
-            await safe_send(corrected, strategy)
+                ocr_part = html_escape(raw)[:3500]
+                await message.answer(f"<b>OCR ({lang})</b>\n<pre>{ocr_part}</pre>", parse_mode=ParseMode.HTML)
+                await safe_send(full_text, strategy)
         else:
-            await safe_send(corrected, strategy)
+                await safe_send(full_text, strategy)
+        await _maybe_send_doc_type(message, raw)
     elif mime == "application/pdf" or file_name.lower().endswith(".pdf"):
         await message.answer("Получен PDF. Пытаюсь извлечь страницы как изображения...")
         try:
@@ -438,6 +587,10 @@ async def on_document(message: Message):
                 user_id=message.from_user.id,
                 username=message.from_user.username or str(message.from_user.id),
             )
+            # для PDF используем первую сохранённую страницу как представителя изображения
+            first_page_path = os.path.join(tmp_dir, f"{doc.file_id}_page_1.jpg") if pages else None
+            extra = _build_extra_info(first_page_path, combined)
+            full_text = f"{corrected}\n\n{extra}" if extra else corrected
             if st["debug"]:
                 def html_escape(s: str) -> str:
                     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -446,9 +599,9 @@ async def on_document(message: Message):
                 await message.answer(
                     f"<b>OCR ({lang})</b>\n<pre>{ocr_part}</pre>", parse_mode=ParseMode.HTML
                 )
-                await safe_send(corrected, strategy)
+                await safe_send(full_text, strategy)
             else:
-                await safe_send(corrected, strategy)
+                await safe_send(full_text, strategy)
         except Exception:
             await message.answer(
                 "Для PDF требуется poppler и пакет pdf2image. Пока обработка PDF недоступна."
@@ -494,6 +647,8 @@ def register_handlers(dp):
     dp.message.register(cmd_setkey, F.text.startswith("/setkey"))
     dp.message.register(cmd_delkey, F.text.startswith("/delkey"))
     dp.message.register(cmd_mykeys, F.text.startswith("/mykeys"))
+    dp.message.register(cmd_ml_demo, F.text.startswith("/ml_demo"))
+    dp.message.register(cmd_ml_requirements, F.text.startswith("/ml_requirements"))
 
     dp.callback_query.register(on_btn)
     dp.message.register(on_photo, F.photo)

@@ -91,6 +91,9 @@ def kb_settings(user_id: int) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="📝 Регистрация", callback_data="do_register"),
                 InlineKeyboardButton(text=login_text, callback_data="do_login"),
             ],
+            [
+                InlineKeyboardButton(text="📋 ML требования", callback_data="ml_requirements"),
+            ],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="close_settings")],
         ]
     )

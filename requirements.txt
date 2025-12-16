@@ -15,3 +15,10 @@ gigachat
 # Тестирование backend API
 pytest
 requests
+
+# ML / анализ данных
+numpy
+pandas
+scikit-learn
+matplotlib
+joblib
