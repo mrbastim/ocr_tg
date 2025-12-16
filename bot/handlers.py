@@ -311,8 +311,15 @@ async def cmd_debug(message: Message):
     await message.answer(f"Debug: {'on' if st['debug'] else 'off'}", reply_markup=kb_main(message.from_user.id))
 
 
+def _html_escape(s: str) -> str:
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def _build_extra_info(image_path: str | None, raw_text: str) -> str:
-    """Собрать дополнительную строку для ответа: тип документа и время обработки."""
+    """Собрать дополнительную строку для ответа: тип документа.
+
+    Время обработки теперь показывается отдельным сообщением ДО OCR.
+    """
 
     parts = []
 
@@ -331,12 +338,6 @@ def _build_extra_info(image_path: str | None, raw_text: str) -> str:
             parts.append(f"Тип изображения (по тексту): {human}")
         except Exception as e:
             logger.debug(f"doc_type classification failed: {e}")
-
-    if build_processing_summary:
-        try:
-            parts.append(build_processing_summary(image_path, raw_text))
-        except Exception as e:
-            logger.debug(f"processing summary failed: {e}")
 
     return "\n".join(parts) if parts else ""
 
@@ -463,6 +464,14 @@ async def on_photo(message: Message):
     local_path = os.path.join(tmp_dir, f"{photo.file_id}.jpg")
     await message.bot.download_file(file.file_path, local_path)
 
+    # Сначала — быстрая оценка времени обработки по изображению
+    if build_processing_summary:
+        try:
+            estimate = build_processing_summary(local_path, "")
+            await message.answer(estimate)
+        except Exception as e:
+            logger.debug(f"processing time estimate failed: {e}")
+
     st = get_state(message.from_user.id)
     lang = st["lang"]
     await message.answer(f"Выполняю OCR (язык {lang})...")
@@ -487,27 +496,24 @@ async def on_photo(message: Message):
     logger.debug(f"LLM corrected len={len(corrected)}")
 
     extra = _build_extra_info(local_path, raw)
-    if extra:
-        full_text = f"{corrected}\n\n{extra}"
-    else:
-        full_text = corrected
+    llm_label = llm
 
-    async def safe_send(text: str):
-        pm = ParseMode.MARKDOWN if strategy in {"B", "C"} else None
+    async def send_llm_result(text: str, extra_text: str):
+        body = _html_escape(text)[:3500]
+        html = f"<b>LLM ({llm_label})</b>\n<pre>{body}</pre>"
+        if extra_text:
+            html += f"\n\n{_html_escape(extra_text)}"
         try:
-            return await message.answer(text[:4000], parse_mode=pm)
+            return await message.answer(html, parse_mode=ParseMode.HTML)
         except TelegramBadRequest:
             return await message.answer(text[:4000])
 
     if st["debug"]:
-        def html_escape(s: str) -> str:
-            return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-        ocr_part = html_escape(raw)[:3500]
+        ocr_part = _html_escape(raw)[:3500]
         await message.answer(f"<b>OCR ({lang})</b>\n<pre>{ocr_part}</pre>", parse_mode=ParseMode.HTML)
-        await safe_send(full_text)
+        await send_llm_result(corrected, extra)
     else:
-        await safe_send(full_text)
+        await send_llm_result(corrected, extra)
 
 
 async def on_document(message: Message):
@@ -526,12 +532,23 @@ async def on_document(message: Message):
     st = get_state(message.from_user.id)
     lang = st["lang"]
 
-    async def safe_send(text: str, strategy: str):
-        pm = ParseMode.MARKDOWN if strategy in {"B", "C"} else None
+    async def send_llm_result(text: str, extra_text: str, llm_label: str):
+        body = _html_escape(text)[:3500]
+        html = f"<b>LLM ({llm_label})</b>\n<pre>{body}</pre>"
+        if extra_text:
+            html += f"\n\n{_html_escape(extra_text)}"
         try:
-            return await message.answer(text[:4000], parse_mode=pm)
+            return await message.answer(html, parse_mode=ParseMode.HTML)
         except TelegramBadRequest:
             return await message.answer(text[:4000])
+
+    # Быстрая оценка времени обработки для изображений
+    if build_processing_summary and mime.startswith("image/"):
+        try:
+            estimate = build_processing_summary(local_path, "")
+            await message.answer(estimate)
+        except Exception as e:
+            logger.debug(f"processing time estimate (document) failed: {e}")
 
     if mime.startswith("image/"):
         await message.answer("Обнаружено изображение в документе. Выполняю OCR...")
@@ -550,17 +567,13 @@ async def on_document(message: Message):
             username=message.from_user.username or str(message.from_user.id),
         )
         extra = _build_extra_info(local_path, raw)
-        full_text = f"{corrected}\n\n{extra}" if extra else corrected
 
         if st["debug"]:
-            def html_escape(s: str) -> str:
-                return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-            ocr_part = html_escape(raw)[:3500]
+            ocr_part = _html_escape(raw)[:3500]
             await message.answer(f"<b>OCR ({lang})</b>\n<pre>{ocr_part}</pre>", parse_mode=ParseMode.HTML)
-            await safe_send(full_text, strategy)
+            await send_llm_result(corrected, extra, llm)
         else:
-            await safe_send(full_text, strategy)
+            await send_llm_result(corrected, extra, llm)
     elif mime == "application/pdf" or file_name.lower().endswith(".pdf"):
         await message.answer("Получен PDF. Пытаюсь извлечь страницы как изображения...")
         try:
@@ -593,18 +606,14 @@ async def on_document(message: Message):
             # для PDF используем первую сохранённую страницу как представителя изображения
             first_page_path = os.path.join(tmp_dir, f"{doc.file_id}_page_1.jpg") if pages else None
             extra = _build_extra_info(first_page_path, combined)
-            full_text = f"{corrected}\n\n{extra}" if extra else corrected
             if st["debug"]:
-                def html_escape(s: str) -> str:
-                    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-                ocr_part = html_escape(combined)[:3500]
+                ocr_part = _html_escape(combined)[:3500]
                 await message.answer(
                     f"<b>OCR ({lang})</b>\n<pre>{ocr_part}</pre>", parse_mode=ParseMode.HTML
                 )
-                await safe_send(full_text, strategy)
+                await send_llm_result(corrected, extra, llm)
             else:
-                await safe_send(full_text, strategy)
+                await send_llm_result(corrected, extra, llm)
         except Exception:
             await message.answer(
                 "Для PDF требуется poppler и пакет pdf2image. Пока обработка PDF недоступна."
