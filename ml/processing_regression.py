@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Dict
+from pathlib import Path
+from typing import Dict, Optional, Any
 
 import cv2
 import numpy as np
+import joblib
 
 
 @dataclass
@@ -16,6 +18,36 @@ class ImageFeatures:
     brightness: float
     contrast: float
     word_count: int
+
+
+MODEL_PATH = Path("ml_output") / "models" / "ocr_time_regression.joblib"
+_cached_model: Optional[Dict[str, Any]] = None
+
+
+def _load_trained_model() -> Optional[Dict[str, Any]]:
+    """Попробовать загрузить обученную регрессионную модель времени.
+
+    Возвращает dict {"model": ..., "feature_names": [...]} или None,
+    если модель ещё не обучена или не читается.
+    """
+
+    global _cached_model
+    if _cached_model is not None:
+        return _cached_model
+
+    if not MODEL_PATH.exists():
+        return None
+
+    try:
+        payload = joblib.load(MODEL_PATH)
+        if not isinstance(payload, dict):
+            return None
+        if "model" not in payload or "feature_names" not in payload:
+            return None
+        _cached_model = payload
+        return _cached_model
+    except Exception:
+        return None
 
 
 def extract_image_features(image_path: str, text: str) -> ImageFeatures:
@@ -65,26 +97,44 @@ def extract_image_features(image_path: str, text: str) -> ImageFeatures:
 
 
 def predict_ocr_time(features: ImageFeatures) -> float:
-    """Простая "регрессия" для оценки времени OCR в секундах.
+    """Оценка времени OCR в секундах.
 
-    Используем линейную модель по нескольким признакам.
-    Это скорее обучающий пример, чем точный прогноз.
+    1. Если есть обученная модель (ocr_time_regression.joblib), используем её.
+    2. Иначе используем простую эвристику по размеру, контрасту и числу слов.
     """
 
-    # Базовое время (накладные расходы пайплайна)
+    model_payload = _load_trained_model()
+    if model_payload is not None:
+        model = model_payload["model"]
+        feature_names = list(model_payload.get("feature_names", []))
+        feat_map: Dict[str, float] = {
+            "width": float(features.width),
+            "height": float(features.height),
+            "megapixels": float(features.megapixels),
+            "brightness": float(features.brightness),
+            "contrast": float(features.contrast),
+            "word_count": float(features.word_count),
+        }
+        if feature_names:
+            x_vec = [feat_map.get(name, 0.0) for name in feature_names]
+            try:
+                pred = model.predict([x_vec])[0]
+                t = float(pred)
+                if np.isfinite(t):
+                    # Ограничиваем разумный диапазон
+                    return float(max(0.1, min(t, 120.0)))
+            except Exception:
+                # Падаем в эвристику ниже
+                pass
+
+    # Базовая эвристика, если модели ещё нет
     base = 1.0
-
-    # Чем больше мегапикселей, тем дольше
     mp_term = 0.8 * features.megapixels
-
-    # Больше слов — немного дольше (актуально, когда текст уже известен)
     wc_term = 0.002 * features.word_count
-
-    # Слабый контраст ухудшает OCR → чуть больше времени
     contrast_term = 0.8 * (1.0 - features.contrast)
 
     t = base + mp_term + wc_term + contrast_term
-    t = max(0.5, min(t, 20.0))  # ограничим диапазон
+    t = max(0.5, min(t, 20.0))
     return float(t)
 
 

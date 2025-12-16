@@ -58,13 +58,9 @@ def run_regression(X: pd.DataFrame, y: pd.Series) -> Dict[str, float]:
         X, y, test_size=0.2, random_state=42
     )
 
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
-
     model = LinearRegression()
-    model.fit(X_train_scaled, y_train)
-    y_pred = model.predict(X_test_scaled)
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
 
     r2 = r2_score(y_test, y_pred)
     mae = mean_absolute_error(y_test, y_pred)
@@ -94,7 +90,12 @@ def run_regression(X: pd.DataFrame, y: pd.Series) -> Dict[str, float]:
     plt.savefig(PLOTS_DIR / "regression_errors_hist.png")
     plt.close()
 
-    joblib.dump(model, MODELS_DIR / "linear_regression.joblib")
+    # Сохраняем модель вместе с порядком фичей, чтобы использовать в боте
+    payload = {
+        "model": model,
+        "feature_names": list(X.columns),
+    }
+    joblib.dump(payload, MODELS_DIR / "ocr_time_regression.joblib")
 
     return {"r2": float(r2), "mae": float(mae), "mse": float(mse)}
 
@@ -243,7 +244,7 @@ def run_all(csv_path: Optional[str] = None, target_col: Optional[str] = None) ->
         raise FileNotFoundError(f"CSV файл не найден: {csv_path}")
 
     print(f"Загружаю CSV датасет: {csv_path}")
-    X, y = load_csv_dataset(csv_path, target_col)
+    X_full, y = load_csv_dataset(csv_path, target_col)
 
     y_cls = y
     if not np.issubdtype(y_cls.dtype, np.number):
@@ -252,15 +253,31 @@ def run_all(csv_path: Optional[str] = None, target_col: Optional[str] = None) ->
         )
     y_reg = y_cls.astype(float)
 
-    print(f"Форма X: {X.shape}")
+    # Для регрессии стараемся использовать те же признаки, что и в боте
+    preferred_cols = [
+        "width",
+        "height",
+        "megapixels",
+        "brightness",
+        "contrast",
+        "word_count",
+    ]
+    available = [c for c in preferred_cols if c in X_full.columns]
+    if available:
+        X_reg = X_full[available].copy()
+    else:
+        X_reg = X_full
 
-    metrics_reg = run_regression(X, y_reg)
-    metrics_cls = run_classification(X, y_cls)
-    metrics_clu = run_clustering(X, y_cls)
+    print(f"Форма X_reg (для регрессии): {X_reg.shape}")
+    print(f"Форма X_full (для классификации/кластеризации): {X_full.shape}")
+
+    metrics_reg = run_regression(X_reg, y_reg)
+    metrics_cls = run_classification(X_full, y_cls)
+    metrics_clu = run_clustering(X_full, y_cls)
 
     return {
-        "n_samples": int(X.shape[0]),
-        "n_features": int(X.shape[1]),
+        "n_samples": int(X_full.shape[0]),
+        "n_features": int(X_full.shape[1]),
         "regression": metrics_reg,
         "classification": metrics_cls,
         "clustering": metrics_clu,
