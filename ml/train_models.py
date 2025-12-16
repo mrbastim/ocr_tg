@@ -1,5 +1,4 @@
 import argparse
-import os
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any
 
@@ -7,13 +6,11 @@ import joblib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from sklearn import datasets
 from sklearn.cluster import KMeans
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.metrics import (
     accuracy_score,
     classification_report,
-    confusion_matrix,
     f1_score,
     mean_absolute_error,
     mean_squared_error,
@@ -35,48 +32,6 @@ def ensure_dirs() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     PLOTS_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def load_default_dataset() -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
-    """Загружаем встроенный ТЕКСТОВЫЙ датасет документов (20newsgroups).
-
-    Идея: приближаем задачу к работе с документами, как в боте.
-
-    Возвращаем:
-    - X: TF-IDF признаки документов (DataFrame)
-    - y_cls: целевая переменная для классификации (тематика письма)
-    - y_reg: целевая переменная для регрессии — длина документа (в словах)
-    """
-
-    categories = [
-        "comp.graphics",
-        "sci.space",
-        "rec.sport.hockey",
-        "talk.politics.mideast",
-    ]
-
-    data = datasets.fetch_20newsgroups(
-        subset="train",
-        categories=categories,
-        remove=("headers", "footers", "quotes"),
-    )
-
-    texts = data.data
-    y_cls = pd.Series(data.target, name="target")
-
-    # Цель для регрессии — длина документа в словах
-    doc_lengths = pd.Series([len(t.split()) for t in texts], name="doc_len")
-
-    from sklearn.feature_extraction.text import TfidfVectorizer
-
-    vectorizer = TfidfVectorizer(max_features=2000, stop_words="english")
-    X_sparse = vectorizer.fit_transform(texts)
-    feature_names = vectorizer.get_feature_names_out()
-    X = pd.DataFrame(X_sparse.toarray(), columns=feature_names)
-
-    y_reg = doc_lengths
-
-    return X, y_cls, y_reg
 
 
 def load_csv_dataset(path: Path, target_col: str) -> Tuple[pd.DataFrame, pd.Series]:
@@ -273,28 +228,29 @@ def run_all(csv_path: Optional[str] = None, target_col: Optional[str] = None) ->
     """Запустить полный ML-эксперимент и вернуть метрики.
 
     Используется как из CLI (main), так и из Telegram-бота.
+    Ожидается табличный датасет (например, логи бота), переданный в виде CSV.
     """
 
     ensure_dirs()
 
-    if csv_path:
-        csv_path = Path(csv_path)
-        if not csv_path.exists():
-            raise FileNotFoundError(f"CSV файл не найден: {csv_path}")
-        if not target_col:
-            raise ValueError("Для своего CSV укажите target_col")
-        print(f"Загружаю CSV датасет: {csv_path}")
-        X, y = load_csv_dataset(csv_path, target_col)
+    if not csv_path or not target_col:
+        raise ValueError(
+            "Нужно указать --csv и --target-col. Рекомендуется использовать CSV с логами бота или другой табличный датасет."
+        )
 
-        y_cls = y
-        if not np.issubdtype(y_cls.dtype, np.number):
-            raise ValueError(
-                "Для регрессии нужен числовой target; используйте встроенный датасет или другой CSV."
-            )
-        y_reg = y_cls.astype(float)
-    else:
-        print("Использую встроенный датасет 20newsgroups из sklearn")
-        X, y_cls, y_reg = load_default_dataset()
+    csv_path = Path(csv_path)
+    if not csv_path.exists():
+        raise FileNotFoundError(f"CSV файл не найден: {csv_path}")
+
+    print(f"Загружаю CSV датасет: {csv_path}")
+    X, y = load_csv_dataset(csv_path, target_col)
+
+    y_cls = y
+    if not np.issubdtype(y_cls.dtype, np.number):
+        raise ValueError(
+            "Для регрессии нужен числовой числовой target; используйте CSV, где целевая колонка — число (например, время обработки)."
+        )
+    y_reg = y_cls.astype(float)
 
     print(f"Форма X: {X.shape}")
 
@@ -315,22 +271,21 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Учебный ML-проект: регрессия, классификация, кластеризация и нейросеть "
-            "на табличных данных (по умолчанию 20newsgroups из sklearn)."
+            "на табличных данных. По умолчанию используется ваш CSV (например, логи бота)."
         )
     )
     parser.add_argument(
         "--csv",
         type=str,
         default=None,
-        help="Путь к своему CSV (если не задан, используем встроенный датасет)",
+        help="Путь к своему CSV (например, ml_output/events.csv с логами бота)",
     )
     parser.add_argument(
         "--target-col",
         type=str,
         default=None,
         help=(
-            "Имя целевой колонки для CSV. Если не задано, для встроенного датасета "
-            "используется 'target' для классификации и 'mean radius' для регрессии."
+            "Имя целевой колонки для CSV. Рекомендуется использовать логи бота или другой табличный датасет."
         ),
     )
     return parser.parse_args()
