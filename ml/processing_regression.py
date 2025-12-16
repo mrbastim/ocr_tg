@@ -71,20 +71,20 @@ def predict_ocr_time(features: ImageFeatures) -> float:
     Это скорее обучающий пример, чем точный прогноз.
     """
 
-    # Базовое время
-    base = 0.4
+    # Базовое время (накладные расходы пайплайна)
+    base = 1.0
 
     # Чем больше мегапикселей, тем дольше
-    mp_term = 0.5 * features.megapixels
+    mp_term = 0.8 * features.megapixels
 
-    # Больше слов — немного дольше
-    wc_term = 0.001 * features.word_count
+    # Больше слов — немного дольше (актуально, когда текст уже известен)
+    wc_term = 0.002 * features.word_count
 
     # Слабый контраст ухудшает OCR → чуть больше времени
-    contrast_term = 0.4 * (1.0 - features.contrast)
+    contrast_term = 0.8 * (1.0 - features.contrast)
 
     t = base + mp_term + wc_term + contrast_term
-    t = max(0.3, min(t, 15.0))  # ограничим диапазон
+    t = max(0.5, min(t, 20.0))  # ограничим диапазон
     return float(t)
 
 

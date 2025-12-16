@@ -315,6 +315,20 @@ def _html_escape(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def _format_llm_label(llm_raw: str) -> str:
+    """Красивое имя LLM для заголовка.
+
+    Внутри состояния 'api' сейчас означает Gemini (внешний сервер).
+    """
+
+    llm = (llm_raw or "").lower()
+    if llm == "gigachat":
+        return "GigaChat"
+    if llm in {"gemini", "api"}:
+        return "Gemini"
+    return llm_raw or "LLM"
+
+
 def _build_extra_info(image_path: str | None, raw_text: str) -> str:
     """Собрать дополнительную строку для ответа: тип документа.
 
@@ -496,11 +510,10 @@ async def on_photo(message: Message):
     logger.debug(f"LLM corrected len={len(corrected)}")
 
     extra = _build_extra_info(local_path, raw)
-    llm_label = llm
 
     async def send_llm_result(text: str, extra_text: str):
         body = _html_escape(text)[:3500]
-        html = f"<b>LLM ({llm_label})</b>\n<pre>{body}</pre>"
+        html = f"<b>LLM ({_format_llm_label(llm)})</b>\n<pre>{body}</pre>"
         if extra_text:
             html += f"\n\n{_html_escape(extra_text)}"
         try:
@@ -534,7 +547,7 @@ async def on_document(message: Message):
 
     async def send_llm_result(text: str, extra_text: str, llm_label: str):
         body = _html_escape(text)[:3500]
-        html = f"<b>LLM ({llm_label})</b>\n<pre>{body}</pre>"
+        html = f"<b>LLM ({_format_llm_label(llm_label)})</b>\n<pre>{body}</pre>"
         if extra_text:
             html += f"\n\n{_html_escape(extra_text)}"
         try:
