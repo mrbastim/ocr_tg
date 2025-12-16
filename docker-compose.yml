@@ -10,6 +10,8 @@ services:
     volumes:
       # Общий именованный том для логов и моделей ML
       - ml_output:/app/ml_output
+      # Локальная папка с фото на хосте -> внутрь контейнера
+      - /ocr_tg/photos:/app/photos
     # При необходимости укажи URL бэкенда в .env (AI_API_BASE и т.п.)
 
 volumes:
