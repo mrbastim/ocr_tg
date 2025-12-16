@@ -67,7 +67,7 @@ async def cmd_help(message: Message):
     await message.answer(
         "/start — начать и выбрать стратегию\n"
         "/strategy C — выбрать стратегию\n"
-        "/lang rus|eng — выбрать язык OCR\n"
+        "/lang rus|eng|rus+eng — выбрать язык OCR\n"
         "/llm gigachat|gemini|api — выбрать провайдера LLM (api = внешний сервер)\n"
         "/debug on|off — включить/выключить вывод OCR и LLM\n"
         "/apilog — последние строки лога интеграции (AI_API_DEBUG=1)\n"
@@ -213,11 +213,11 @@ async def cmd_lang(message: Message):
     logger.debug(f"/lang from={message.from_user.id} text={message.text}")
     args = (message.text or "").split()
     if len(args) < 2:
-        await message.answer("Укажите язык: rus или eng")
+        await message.answer("Укажите язык: rus, eng или rus+eng")
         return
     lang = args[1].lower()
-    if lang not in {"rus", "eng"}:
-        await message.answer("Допустимые значения: rus, eng")
+    if lang not in {"rus", "eng", "rus+eng"}:
+        await message.answer("Допустимые значения: rus, eng, rus+eng")
         return
     st = get_state(message.from_user.id)
     st["lang"] = lang
@@ -422,7 +422,7 @@ async def on_btn(query: CallbackQuery):
             edited = True
     elif data.startswith("set_lang:"):
         _, val = data.split(":", 1)
-        if val in {"rus", "eng"}:
+        if val in {"rus", "eng", "rus+eng"}:
             st["lang"] = val
             edited = True
     elif data == "toggle_debug":
@@ -593,6 +593,7 @@ async def on_photo(message: Message):
                 is_pdf=False,
                 t_ocr=ocr_time,
                 t_total=total_time,
+                predicted_time=predicted_time,
             )
         except Exception as e:
             logger.debug(f"ml log_event (photo) failed: {e}")
@@ -678,6 +679,7 @@ async def on_document(message: Message):
                     is_pdf=False,
                     t_ocr=ocr_time,
                     t_total=total_time,
+                    predicted_time=predicted_time,
                 )
             except Exception as e:
                 logger.debug(f"ml log_event (document image) failed: {e}")
@@ -740,6 +742,7 @@ async def on_document(message: Message):
                         is_pdf=True,
                         t_ocr=total_time,
                         t_total=total_time,
+                        predicted_time=None,
                     )
                 except Exception as e:
                     logger.debug(f"ml log_event (pdf) failed: {e}")

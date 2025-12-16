@@ -104,7 +104,7 @@ def prompt_strategy_C(raw_text: str) -> str:
     )
 
 
-def run_ocr(image_path: str, lang: str = "rus") -> str:
+def run_ocr(image_path: str, lang: str = "rus+eng") -> str:
     raw = get_raw_text(image_path, lang=lang)
     return normalize_whitespace(raw)
 

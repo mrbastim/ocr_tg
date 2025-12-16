@@ -14,7 +14,7 @@ def get_state(user_id: int) -> Dict:
     if not st:
         st = {
             "strategy": "C",
-            "lang": os.getenv("OCR_LANG", "rus"),
+            "lang": os.getenv("OCR_LANG", "rus+eng"),
             "llm": os.getenv("LLM_PROVIDER", "gigachat"),
             "debug": False,
             "settings_open": False,
@@ -74,6 +74,9 @@ def kb_settings(user_id: int) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(text=mark("Язык: RU", lang == "rus"), callback_data="set_lang:rus"),
                 InlineKeyboardButton(text=mark("Язык: EN", lang == "eng"), callback_data="set_lang:eng"),
+                InlineKeyboardButton(
+                    text=mark("Язык: RU+EN", lang == "rus+eng"), callback_data="set_lang:rus+eng"
+                ),
             ],
             [InlineKeyboardButton(text=mark("Debug", debug), callback_data="toggle_debug")],
             [

@@ -8,7 +8,7 @@ if os.name == "nt":
     pytesseract.pytesseract.tesseract_cmd = r"D:\\tesseract-ocr\\tesseract.exe"
     os.environ["TESSDATA_PREFIX"] = r"D:\\tesseract-ocr\\tessdata"
 
-def get_raw_text(image_path, lang='rus'):
+def get_raw_text(image_path, lang='rus+eng'):
     img = cv2.imread(image_path)
     if img is None:
         raise FileNotFoundError(f"Не удалось открыть изображение по пути: {image_path}. Проверьте существование файла и рабочую директорию.")

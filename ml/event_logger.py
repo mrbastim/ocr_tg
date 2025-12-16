@@ -43,6 +43,7 @@ def log_event(
     is_pdf: bool,
     t_ocr: float,
     t_total: float,
+    predicted_time: float | None = None,
 ) -> None:
     """Записать один факт обработки изображения в CSV-лог.
 
@@ -52,7 +53,12 @@ def log_event(
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
     feats: ImageFeatures = extract_image_features(image_path, text)
-    predicted = predict_ocr_time(feats)
+    # Если прогноз времени уже был рассчитан до OCR и показан пользователю,
+    # логируем именно его, чтобы графики в /ml_stats отражали тот же прогноз.
+    if predicted_time is not None:
+        predicted = float(predicted_time)
+    else:
+        predicted = predict_ocr_time(feats)
 
     try:
         doc_label = classify_document_text(text)[0]
