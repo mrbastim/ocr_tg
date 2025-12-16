@@ -322,7 +322,10 @@ def _build_extra_info(image_path: str | None, raw_text: str) -> str:
             label_map = {
                 "receipt": "чек / кассовый документ",
                 "screenshot": "скриншот экрана",
-                "document": "скан документа / текста",
+                "document": "скан текста / отчёт",
+                "form": "форма / анкета",
+                "diagram": "техническая схема / график",
+                "unknown": "тип не распознан / недостаточно текста",
             }
             human = label_map.get(label, label)
             parts.append(f"Тип изображения (по тексту): {human}")

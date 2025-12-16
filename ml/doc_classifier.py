@@ -22,22 +22,36 @@ def _score_receipt(text: str) -> float:
         "ккм",
         "инн",
         "сумма",
+        "руб",
+        "р.",
+        "eur",
+        "usd",
         "total",
         "subtotal",
         "cash",
         "change",
         "receipt",
     ]
+    found_kw = False
     for kw in keywords:
         if kw in text:
             score += 1.0
+            found_kw = True
 
     price_pattern = re.compile(r"\b\d+[.,]\d{2}\b")
     prices = price_pattern.findall(text)
-    score += min(len(prices), 10) * 0.4
+    # Если нет ни одного "кассового" слова, не воспринимаем одни только числа как чек
+    if found_kw:
+        score += min(len(prices), 10) * 0.4
+    else:
+        score += min(len(prices), 10) * 0.1
 
     if "шт" in text or "кол-во" in text or "quantity" in text:
         score += 0.8
+
+    # Дополнительный фильтр: очень короткий текст и нет ключевых слов — скорее не чек
+    if not found_kw and len(text.split()) < 20:
+        score *= 0.3
 
     return score
 
@@ -78,21 +92,14 @@ def _score_document(text: str) -> float:
     score = 0.0
     keywords = [
         "договор",
-        "заявление",
-        "приказ",
-        "акт",
-        "справка",
-        "паспорт",
-        "протокол",
-        "резолюция",
-        "отчёт",
         "отчет",
-        "приложение",
-        "страница",
-        "organization",
-        "university",
-        "certificate",
-        "agreement",
+        "отчёт",
+        "записка",
+        "инструкция",
+        "руководство",
+        "protocol",
+        "report",
+        "manual",
     ]
     for kw in keywords:
         if kw in text:
@@ -104,10 +111,79 @@ def _score_document(text: str) -> float:
     return score
 
 
+def _score_form(text: str) -> float:
+    score = 0.0
+    keywords = [
+        "анкета",
+        "форма",
+        "заполните",
+        "фио",
+        "фамилия",
+        "имя",
+        "отчество",
+        "подпись",
+        "дата",
+        "паспорт",
+        "телефон",
+        "e-mail",
+        "email",
+        "адрес",
+        "подпись",
+        "печать",
+        "заявитель",
+    ]
+    for kw in keywords:
+        if kw in text:
+            score += 1.0
+
+    # формы часто содержат много коротких полей → двоеточия
+    score += text.count(":") * 0.1
+    return score
+
+
+def _score_diagram(text: str) -> float:
+    score = 0.0
+    keywords = [
+        "схема",
+        "схемы",
+        "диаграмма",
+        "график",
+        "чертеж",
+        "чертёж",
+        "генератор",
+        "двигатель",
+        "насос",
+        "датчик",
+        "температура",
+        "давление",
+        "напряжение",
+        "ток",
+        "квт",
+        "kw",
+        "rpm",
+        "об/мин",
+        "voltage",
+        "current",
+        "power",
+        "pressure",
+        "flow",
+    ]
+    for kw in keywords:
+        if kw in text:
+            score += 1.0
+
+    # много чисел без кассовых слов тоже признак схем/измерений
+    numbers = re.findall(r"\b\d+[.,]?\d*\b", text)
+    if numbers:
+        score += min(len(numbers), 20) * 0.05
+
+    return score
+
+
 def classify_document_text(text: str) -> Tuple[str, LabelProbs]:
     """Грубая эвристическая классификация типа документа по OCR-тексту.
 
-    Возвращает метку (receipt|screenshot|document) и словарь вероятностей.
+    Возвращает метку (receipt|screenshot|document|form|diagram|unknown) и словарь вероятностей.
     """
 
     t = _normalize(text)
@@ -116,9 +192,18 @@ def classify_document_text(text: str) -> Tuple[str, LabelProbs]:
         "receipt": base + _score_receipt(t),
         "screenshot": base + _score_screenshot(t),
         "document": base + _score_document(t),
+        "form": base + _score_form(t),
+        "diagram": base + _score_diagram(t),
     }
 
     total = sum(scores.values()) or 1.0
     probs: LabelProbs = {k: v / total for k, v in scores.items()}
+
+    # Порог для "неопределённого" класса: если лучший класс слишком слабо выражен,
+    # считаем, что надёжной информации о типе нет.
     label = max(probs, key=probs.get)
+    max_prob = probs[label]
+    if max_prob < 0.45:
+        return "unknown", {"unknown": 1.0}
+
     return label, probs
