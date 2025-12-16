@@ -548,16 +548,16 @@ async def on_document(message: Message):
         )
         extra = _build_extra_info(local_path, raw)
         full_text = f"{corrected}\n\n{extra}" if extra else corrected
+
         if st["debug"]:
             def html_escape(s: str) -> str:
                 return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-                ocr_part = html_escape(raw)[:3500]
-                await message.answer(f"<b>OCR ({lang})</b>\n<pre>{ocr_part}</pre>", parse_mode=ParseMode.HTML)
-                await safe_send(full_text, strategy)
+            ocr_part = html_escape(raw)[:3500]
+            await message.answer(f"<b>OCR ({lang})</b>\n<pre>{ocr_part}</pre>", parse_mode=ParseMode.HTML)
+            await safe_send(full_text, strategy)
         else:
-                await safe_send(full_text, strategy)
-        await _maybe_send_doc_type(message, raw)
+            await safe_send(full_text, strategy)
     elif mime == "application/pdf" or file_name.lower().endswith(".pdf"):
         await message.answer("Получен PDF. Пытаюсь извлечь страницы как изображения...")
         try:
