@@ -8,6 +8,9 @@ services:
     env_file:
       - ./bot/.env
     volumes:
-      # Общая папка для логов и моделей ML между ботом и Jenkins/batch_import
-      - ./ml_output:/app/ml_output
+      # Общий именованный том для логов и моделей ML
+      - ml_output:/app/ml_output
     # При необходимости укажи URL бэкенда в .env (AI_API_BASE и т.п.)
+
+volumes:
+  ml_output:
