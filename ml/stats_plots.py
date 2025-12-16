@@ -123,7 +123,17 @@ def build_basic_plots() -> List[Tuple[Path, str]]:
 
     # 7. Среднее время обработки по провайдерам LLM
     if {"provider", "total_time"}.issubset(df.columns):
-        prov_df = df.dropna(subset=["provider", "total_time"])
+        prov_df = df.dropna(subset=["provider", "total_time"]).copy()
+        # Нормализуем имена провайдеров: внутренний 'api' и 'gemini' считаем Gemini
+        prov_df["provider"] = prov_df["provider"].replace(
+            {
+                "api": "Gemini",
+                "gemini": "Gemini",
+                "Gemini": "Gemini",
+                "gigachat": "GigaChat",
+                "GigaChat": "GigaChat",
+            }
+        )
         if not prov_df.empty:
             grouped = prov_df.groupby("provider")["total_time"].mean().sort_values(ascending=False)
             plt.figure(figsize=(6, 4))
