@@ -138,7 +138,15 @@ async def cmd_mykeys(message: Message):
     uid = message.from_user.id
     uname = message.from_user.username or str(uid)
     status = api_key_status(uid, uname)
-    has_gem_srv = "✅" if bool(status.get("gemini")) else "—"
+    
+    # Обрабатываем возможные ошибки
+    if "error_code" in status and status["error_code"] == 401:
+        has_gem_srv = "⚠️ (не авторизован)"
+    elif "error" in status:
+        has_gem_srv = "⚠️ (ошибка)"
+    else:
+        has_gem_srv = "✅" if bool(status.get("gemini")) else "—"
+    
     await message.answer(f"Ключи:\nGigaChat (локально): {has_giga_local}\nGemini (сервер): {has_gem_srv}")
 
 
@@ -217,6 +225,17 @@ async def on_btn(query: CallbackQuery):
         edited = True
     elif data == "open_settings":
         st["settings_open"] = True
+        # При открытии настроек проверяем статус ключа Gemini напрямую у сервера
+        uid = query.from_user.id
+        uname = query.from_user.username or str(uid)
+        status = api_key_status(uid, uname, skip_cache=True)
+        
+        if "error_code" in status and status["error_code"] == 401:
+            await query.answer("⚠️ Ключ не обновлён. Требуется вход на API сервер.", show_alert=True)
+        elif "error" in status:
+            await query.answer(f"⚠️ Ошибка при проверке ключа: {status.get('error', 'unknown')}", show_alert=True)
+        else:
+            st["has_gemini"] = bool(status.get("gemini"))
         edited = True
     elif data == "close_settings":
         st["settings_open"] = False
@@ -259,7 +278,8 @@ async def on_btn(query: CallbackQuery):
         # после входа (или при уже валидном токене) проверяем наличие ключа Gemini на сервере
         try:
             status = api_key_status(uid, uname)
-            st["has_gemini"] = bool(status.get("gemini"))
+            if "error" not in status:
+                st["has_gemini"] = bool(status.get("gemini"))
         except Exception as e:
             logger.debug(f"key_status check failed: {e}")
         edited = True

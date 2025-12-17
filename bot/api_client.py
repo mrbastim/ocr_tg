@@ -307,16 +307,23 @@ def api_clear_key(tg_id: int, username: str, provider: str) -> bool:
         return False
 
 
-def api_key_status(tg_id: int, username: str) -> Dict[str, bool]:
+def api_key_status(tg_id: int, username: str, skip_cache: bool = False) -> Dict:
+    """Проверить статус ключа API на сервере.
+    
+    Возвращает словарь с ключами:
+    - 'gemini': bool - наличие ключа
+    - 'error': str - описание ошибки (если есть)
+    - 'error_code': int - код ошибки HTTP (если есть)
+    """
     if not API_BASE:
         _api_log("key_status_skip", reason="no_base")
         return {}
     jwt = _ensure_jwt(tg_id, username)
     if not jwt:
-        return {}
+        return {"error": "auth_failed", "error_code": 401}
     url = _api_url("/user/ai/key")
     headers = {"Authorization": f"Bearer {jwt}"}
-    _api_log("key_status_request", url=url)
+    _api_log("key_status_request", url=url, skip_cache=skip_cache)
     req = urllib.request.Request(url, headers=headers, method="GET")
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
@@ -325,7 +332,7 @@ def api_key_status(tg_id: int, username: str) -> Dict[str, bool]:
             try:
                 data = json.loads(body_raw)
                 # Фактический формат backend: {"data": {"has_key": bool}, "status": "success"}
-                result: Dict[str, bool] = {}
+                result: Dict = {}
                 if isinstance(data, dict) and isinstance(data.get("data"), dict):
                     has_key_val = data["data"].get("has_key")
                     if isinstance(has_key_val, (bool, int)):
@@ -340,17 +347,17 @@ def api_key_status(tg_id: int, username: str) -> Dict[str, bool]:
                 return result
             except Exception as e:
                 _api_log("key_status_parse_error", error=e)
-                return {}
+                return {"error": "parse_error"}
     except urllib.error.HTTPError as e:
         try:
             err_body = e.read().decode("utf-8")
         except Exception:
             err_body = str(e)
         _api_log("key_status_http_error", code=e.code, body=err_body[:1500])
-        return {}
+        return {"error": "http_error", "error_code": e.code, "error_body": err_body[:500]}
     except Exception as e:
         _api_log("key_status_error", error=e)
-        return {}
+        return {"error": str(e)}
 
 
 def api_has_gemini_key_cached(tg_id: int) -> Optional[bool]:
