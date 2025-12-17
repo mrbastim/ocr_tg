@@ -33,6 +33,15 @@ from .event_logger import log_event, LOG_FILE
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
 
 
+def _worker_ocr(path_str: str, lang: str) -> Tuple[str, str, float]:
+    """Worker для параллельного OCR (должен быть на уровне модуля для pickle)."""
+    t0 = time.perf_counter()
+    raw = get_raw_text(path_str, lang=lang)
+    text = normalize_whitespace(raw)
+    ocr_time = time.perf_counter() - t0
+    return path_str, text, ocr_time
+
+
 def iter_images(root: Path, recursive: bool = True) -> Iterable[Path]:
     """Найти все изображения в указанной папке."""
 
@@ -110,16 +119,9 @@ def run_batch_import(
         return count
 
     # Параллельный режим: OCR в отдельных процессах, запись логов — в главном
-    def _worker(path_str: str, lang: str) -> Tuple[str, str, float]:
-        t0 = time.perf_counter()
-        raw = get_raw_text(path_str, lang=lang)
-        text = normalize_whitespace(raw)
-        ocr_time = time.perf_counter() - t0
-        return path_str, text, ocr_time
-
     count = 0
     with ProcessPoolExecutor(max_workers=workers) as pool:
-        futures = [pool.submit(_worker, str(p), lang) for p in images]
+        futures = [pool.submit(_worker_ocr, str(p), lang) for p in images]
         for fut in as_completed(futures):
             try:
                 path_str, text, ocr_time = fut.result()
