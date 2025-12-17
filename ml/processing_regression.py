@@ -123,9 +123,11 @@ def predict_ocr_time(features: ImageFeatures) -> float:
         # Добавляем производные признаки (как в train_models.py)
         if "megapixels" in feat_map:
             feat_map["megapixels_squared"] = feat_map["megapixels"] ** 2
+            feat_map["log_megapixels"] = np.log1p(feat_map["megapixels"])
         if "width" in feat_map and "height" in feat_map:
             feat_map["aspect_ratio"] = feat_map["width"] / (feat_map["height"] + 1)
             feat_map["total_pixels"] = feat_map["width"] * feat_map["height"]
+            feat_map["log_pixels"] = np.log1p(feat_map["total_pixels"])
         
         if feature_names:
             # Передаём именованные признаки в правильном порядке

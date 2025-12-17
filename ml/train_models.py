@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.metrics import (
     accuracy_score,
@@ -52,6 +53,33 @@ def load_csv_dataset(path: Path, target_col: str) -> Tuple[pd.DataFrame, pd.Seri
     return X, y
 
 
+def remove_outliers(X: pd.DataFrame, y: pd.Series, threshold: float = 3.0) -> Tuple[pd.DataFrame, pd.Series]:
+    """Удаляет выбросы по z-score для таргета.
+    
+    Args:
+        X: признаки
+        y: таргет
+        threshold: порог z-score (обычно 3.0)
+    
+    Returns:
+        X и y без выбросов
+    """
+    from scipy import stats
+    
+    # Вычисляем z-score для таргета
+    z_scores = np.abs(stats.zscore(y))
+    
+    # Оставляем только строки, где z-score < threshold
+    mask = z_scores < threshold
+    
+    removed = (~mask).sum()
+    if removed > 0:
+        print(f"⚠️  Удалено {removed} выбросов (z-score > {threshold})")
+        print(f"   Диапазон удалённых значений: {y[~mask].min():.2f} - {y[~mask].max():.2f}")
+    
+    return X[mask], y[mask]
+
+
 def prepare_classification_dataset(
     X: pd.DataFrame,
     y: pd.Series,
@@ -91,28 +119,60 @@ def prepare_classification_dataset(
 
 
 def run_regression(X: pd.DataFrame, y: pd.Series) -> Dict[str, float]:
-    print("=== Линейная регрессия ===")
+    print("=== Регрессия времени OCR ===")
+    
+    # Статистика таргета
+    print(f"\nСтатистика времени OCR (секунды):")
+    print(f"  Среднее: {y.mean():.2f}")
+    print(f"  Медиана: {y.median():.2f}")
+    print(f"  Мин: {y.min():.2f}, Макс: {y.max():.2f}")
+    print(f"  Std: {y.std():.2f}")
+    
+    # Удаляем выбросы (время > 60 секунд явно аномалия для OCR одного изображения)
+    print(f"\nОчистка выбросов...")
+    X_clean, y_clean = remove_outliers(X, y, threshold=3.0)
+    print(f"Осталось сэмплов: {len(y_clean)}/{len(y)}")
     
     # Добавляем дополнительные признаки для лучшего предсказания
-    X_enhanced = X.copy()
-    if 'megapixels' in X.columns:
-        X_enhanced['megapixels_squared'] = X['megapixels'] ** 2
-    if 'width' in X.columns and 'height' in X.columns:
-        X_enhanced['aspect_ratio'] = X['width'] / (X['height'] + 1)
-        X_enhanced['total_pixels'] = X['width'] * X['height']
+    X_enhanced = X_clean.copy()
+    if 'megapixels' in X_clean.columns:
+        X_enhanced['megapixels_squared'] = X_clean['megapixels'] ** 2
+        X_enhanced['log_megapixels'] = np.log1p(X_clean['megapixels'])
+    if 'width' in X_clean.columns and 'height' in X_clean.columns:
+        X_enhanced['aspect_ratio'] = X_clean['width'] / (X_clean['height'] + 1)
+        X_enhanced['total_pixels'] = X_clean['width'] * X_clean['height']
+        X_enhanced['log_pixels'] = np.log1p(X_enhanced['total_pixels'])
     
     X_train, X_test, y_train, y_test = train_test_split(
-        X_enhanced, y, test_size=0.2, random_state=42
+        X_enhanced, y_clean, test_size=0.2, random_state=42
     )
 
-    # Нормализуем признаки для лучшей регрессии
+    # Нормализуем признаки
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
     
-    model = LinearRegression()
+    # Используем Random Forest вместо линейной регрессии
+    print(f"\nОбучение Random Forest...")
+    model = RandomForestRegressor(
+        n_estimators=100,
+        max_depth=15,
+        min_samples_split=5,
+        min_samples_leaf=2,
+        random_state=42,
+        n_jobs=-1
+    )
     model.fit(X_train_scaled, y_train)
     y_pred = model.predict(X_test_scaled)
+    
+    # Важность признаков
+    feature_importance = pd.DataFrame({
+        'feature': X_enhanced.columns,
+        'importance': model.feature_importances_
+    }).sort_values('importance', ascending=False)
+    print(f"\nТоп-5 важных признаков:")
+    for _, row in feature_importance.head(5).iterrows():
+        print(f"  {row['feature']}: {row['importance']:.3f}")
 
     r2 = r2_score(y_test, y_pred)
     mae = mean_absolute_error(y_test, y_pred)
