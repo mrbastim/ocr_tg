@@ -107,7 +107,10 @@ def predict_ocr_time(features: ImageFeatures) -> float:
     model_payload = _load_trained_model()
     if model_payload is not None:
         model = model_payload["model"]
+        scaler = model_payload.get("scaler")  # может быть None для старых моделей
         feature_names = list(model_payload.get("feature_names", []))
+        
+        # Базовые признаки
         feat_map: Dict[str, float] = {
             "width": float(features.width),
             "height": float(features.height),
@@ -116,12 +119,24 @@ def predict_ocr_time(features: ImageFeatures) -> float:
             "contrast": float(features.contrast),
             "word_count": float(features.word_count),
         }
+        
+        # Добавляем производные признаки (как в train_models.py)
+        if "megapixels" in feat_map:
+            feat_map["megapixels_squared"] = feat_map["megapixels"] ** 2
+        if "width" in feat_map and "height" in feat_map:
+            feat_map["aspect_ratio"] = feat_map["width"] / (feat_map["height"] + 1)
+            feat_map["total_pixels"] = feat_map["width"] * feat_map["height"]
+        
         if feature_names:
-            # Передаём именованные признаки, чтобы не ловить предупреждения sklearn о пропавших колонках
+            # Передаём именованные признаки в правильном порядке
             x_vec = pd.DataFrame([
                 {name: feat_map.get(name, 0.0) for name in feature_names}
             ])
             try:
+                # Применяем scaler если он есть
+                if scaler is not None:
+                    x_vec = scaler.transform(x_vec)
+                
                 pred = model.predict(x_vec)[0]
                 t = float(pred)
                 if np.isfinite(t):

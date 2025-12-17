@@ -9,8 +9,8 @@ pipeline {
     }
 
     parameters {
-        booleanParam(name: 'RUN_ML_IMPORT', defaultValue: false, description: 'Запустить ML batch import (долго!)')
-        booleanParam(name: 'RUN_ML_TRAIN',  defaultValue: false, description: 'Запустить ML train models (долго!)')
+        booleanParam(name: 'RUN_ML_IMPORT', defaultValue: true, description: 'Запустить ML batch import (долго!)')
+        booleanParam(name: 'RUN_ML_TRAIN',  defaultValue: true, description: 'Запустить ML train models (долго!)')
     }
 
     options {
@@ -90,7 +90,7 @@ pipeline {
                   -v ml_output:/app/ml_output \
                   -w /app \
                   ${IMAGE_NAME}:${BUILD_NUMBER} \
-                  python -m ml.batch_import --dir /data --lang rus+eng --provider Jenkins --max-files 150
+                  python -m ml.batch_import --dir /data --lang rus+eng --provider Jenkins --max-files 150 --workers 6
                 '''
             }
         }
@@ -111,7 +111,7 @@ pipeline {
                     -v ml_output:/app/ml_output \
                     -w /app \
                     ${IMAGE_NAME}:${BUILD_NUMBER} \
-                    python -m ml.train_models --csv ml_output/events.csv --target-col total_time
+                    python -m ml.train_models --csv ml_output/events.csv --target-col ocr_time
                 else
                   echo "⚠️ Файл ml_output/events.csv не найден, этап обучения пропущен."
                 fi

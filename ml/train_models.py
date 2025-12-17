@@ -92,13 +92,27 @@ def prepare_classification_dataset(
 
 def run_regression(X: pd.DataFrame, y: pd.Series) -> Dict[str, float]:
     print("=== Линейная регрессия ===")
+    
+    # Добавляем дополнительные признаки для лучшего предсказания
+    X_enhanced = X.copy()
+    if 'megapixels' in X.columns:
+        X_enhanced['megapixels_squared'] = X['megapixels'] ** 2
+    if 'width' in X.columns and 'height' in X.columns:
+        X_enhanced['aspect_ratio'] = X['width'] / (X['height'] + 1)
+        X_enhanced['total_pixels'] = X['width'] * X['height']
+    
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42
+        X_enhanced, y, test_size=0.2, random_state=42
     )
 
+    # Нормализуем признаки для лучшей регрессии
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
+    
     model = LinearRegression()
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
+    model.fit(X_train_scaled, y_train)
+    y_pred = model.predict(X_test_scaled)
 
     r2 = r2_score(y_test, y_pred)
     mae = mean_absolute_error(y_test, y_pred)
@@ -128,10 +142,11 @@ def run_regression(X: pd.DataFrame, y: pd.Series) -> Dict[str, float]:
     plt.savefig(PLOTS_DIR / "regression_errors_hist.png")
     plt.close()
 
-    # Сохраняем модель вместе с порядком фичей, чтобы использовать в боте
+    # Сохраняем модель вместе с порядком фичей и scaler
     payload = {
         "model": model,
-        "feature_names": list(X.columns),
+        "scaler": scaler,
+        "feature_names": list(X_enhanced.columns),
     }
     joblib.dump(payload, MODELS_DIR / "ocr_time_regression.joblib")
 

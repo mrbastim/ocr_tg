@@ -546,6 +546,31 @@ async def on_photo(message: Message):
 
     st = get_state(message.from_user.id)
     lang = st["lang"]
+    
+    # Оценка времени ПЕРЕД OCR (на основе размера изображения)
+    predicted_time = None
+    if extract_image_features and predict_ocr_time:
+        try:
+            # Делаем быструю оценку по размеру изображения без OCR
+            import cv2
+            img = cv2.imread(local_path)
+            if img is not None:
+                from ml.processing_regression import ImageFeatures
+                h, w = img.shape[:2]
+                brightness = float(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).mean())
+                feats = ImageFeatures(
+                    width=w,
+                    height=h,
+                    megapixels=(w * h) / 1_000_000,
+                    brightness=brightness,
+                    contrast=0.0,  # заполним после OCR
+                    word_count=0    # заполним после OCR
+                )
+                predicted_time = predict_ocr_time(feats)
+                await message.answer(f"Это займёт примерно {predicted_time:.1f} секунды обработки.")
+        except Exception as e:
+            logger.debug(f"processing time estimate failed: {e}")
+    
     await message.answer(f"Выполняю OCR (язык {lang})...")
     try:
         import time as _time
@@ -561,17 +586,6 @@ async def on_photo(message: Message):
 
     strategy = st["strategy"]
     llm = st["llm"]
-    
-    # Оценка времени ПОСЛЕ OCR (когда известен реальный text для word_count)
-    predicted_time = None
-    feats = None
-    if extract_image_features and predict_ocr_time:
-        try:
-            feats = extract_image_features(local_path, raw)
-            predicted_time = predict_ocr_time(feats)
-            await message.answer(f"Это займёт примерно {predicted_time:.1f} секунды обработки.")
-        except Exception as e:
-            logger.debug(f"processing time estimate failed: {e}")
     
     await message.answer(f"Коррекция LLM (стратегия {strategy}, {llm})...")
     corrected = run_llm_correction(
