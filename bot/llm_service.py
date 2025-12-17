@@ -105,14 +105,17 @@ def yandexgpt_complete(prompt: str, api_key: Optional[str] = None, folder_id: Op
         model = sdk.models.completions(model_name)
         model = model.configure(temperature=float(os.getenv("YANDEX_TEMPERATURE", "0.3")))
         result = model.run(prompt)
-        return result.result.alternatives[0].content.text
-    except AttributeError:
-        # Try alternate response structure
-        try:
-            result = model.run(prompt)
+        
+        # Try different response structures
+        if hasattr(result, 'alternatives'):
+            return result.alternatives[0].text
+        elif hasattr(result, 'result') and hasattr(result.result, 'alternatives'):
             return result.result.alternatives[0].text
-        except Exception as e:
-            return f"[LLM ERROR] Response parse error: {e}\n\n[LLM OUTPUT MOCK]\n{prompt[:200]}..."
+        elif hasattr(result, 'result') and hasattr(result.result, 'alternatives'):
+            return result.result.alternatives[0].content.text
+        else:
+            # Fallback: try to extract text from any structure
+            return str(result)
     except Exception as e:
         logger.error(f"Yandex GPT error: {e}")
         return f"[LLM ERROR] {e}\n\n[LLM OUTPUT MOCK]\n{prompt[:200]}..."
