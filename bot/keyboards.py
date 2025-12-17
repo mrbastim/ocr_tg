@@ -74,6 +74,9 @@ def kb_settings(user_id: int) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(text=mark("Язык: RU", lang == "rus"), callback_data="set_lang:rus"),
                 InlineKeyboardButton(text=mark("Язык: EN", lang == "eng"), callback_data="set_lang:eng"),
+                InlineKeyboardButton(
+                    text=mark("Язык: RU+EN", lang == "rus+eng"), callback_data="set_lang:rus+eng"
+                ),
             ],
             [InlineKeyboardButton(text=mark("Debug", debug), callback_data="toggle_debug")],
             [

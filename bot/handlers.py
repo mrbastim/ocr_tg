@@ -248,7 +248,7 @@ async def on_btn(query: CallbackQuery):
             edited = True
     elif data.startswith("set_lang:"):
         _, val = data.split(":", 1)
-        if val in {"rus", "eng"}:
+        if val in {"rus", "eng", "rus+eng"}:
             st["lang"] = val
             edited = True
     elif data == "toggle_debug":
