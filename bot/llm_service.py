@@ -5,7 +5,7 @@ import logging
 from ocr.base import get_raw_text, normalize_whitespace
 
 from .user_keys import get_user_key
-from .api_client import API_BASE, api_ask_text, api_key_status, api_set_key, api_has_gemini_key_cached
+from .api_client import API_BASE, api_ask_text, api_key_status, api_set_key
 
 logger = logging.getLogger(__name__)
 
@@ -75,21 +75,26 @@ def external_api_complete(prompt: str, tg_id: int, username: str) -> str:
 
 
 def _ensure_gemini_key(tg_id: int, username: str) -> bool:
-    # Сначала смотрим кэш: если уже знаем, что ключ на сервере есть — не дергаем API.
-    cached = api_has_gemini_key_cached(tg_id)
-    if cached is True:
-        return True
-
-    # Если в кэше нет информации, один раз спрашиваем сервер.
-    status = api_key_status(tg_id, username)
+    # Всегда делаем прямой запрос к серверу, проверяя есть ли ключ
+    status = api_key_status(tg_id, username, skip_cache=True)
+    
+    # Проверяем наличие ошибок
+    if "error" in status:
+        # Если ошибка 401, значит не авторизован
+        if status.get("error_code") == 401:
+            logger.warning(f"User {tg_id} not authorized on API server")
+            return False
+        # Другие ошибки также означают, что ключ недоступен
+        return False
+    
+    # Если ключ есть на сервере - хорошо
     if bool(status.get("gemini")):
         return True
 
     # Ключа на сервере нет — пробуем отправить локальный, если он сохранен.
     local_key = get_user_key(tg_id, "gemini")
     if local_key:
-        # api_set_key при успехе сам обновит кэш API_HAS_GEMINI_KEY, поэтому
-        # отдельный повторный запрос статуса не нужен.
+        # api_set_key при успехе сам обновит кэш API_HAS_GEMINI_KEY
         if api_set_key(tg_id, username, "gemini", local_key):
             return True
     return False
