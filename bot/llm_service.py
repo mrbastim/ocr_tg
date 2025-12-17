@@ -98,47 +98,23 @@ def yandexgpt_complete(prompt: str, api_key: Optional[str] = None, folder_id: Op
     if not key or not folder:
         return f"[LLM OUTPUT MOCK]\nYANDEX_API_KEY or YANDEX_FOLDER_ID missing\n\n{prompt[:200]}..."
 
-    # Use httpx directly to avoid SDK auth issues
-    if HTTPX_AVAILABLE:
-        try:
-            url = "https://llm.api.cloud.yandex.net/llm/v1alpha/chat"
-            headers = {
-                "Authorization": f"Api-Key {key}",
-                "x-folder-id": folder,
-                "Content-Type": "application/json",
-            }
-            model_name = os.getenv("YANDEX_MODEL", "yandexgpt")
-            temperature = float(os.getenv("YANDEX_TEMPERATURE", "0.3"))
-            
-            payload = {
-                "modelUri": f"gpt://{folder}/{model_name}",
-                "completionOptions": {"temperature": temperature},
-                "messages": [
-                    {"role": "system", "content": "Ты помощник по коррекции OCR и Markdown."},
-                    {"role": "user", "content": prompt}
-                ]
-            }
-            
-            with httpx.Client() as client:
-                resp = client.post(url, json=payload, headers=headers, timeout=30.0)
-                resp.raise_for_status()
-                data = resp.json()
-                # Extract text from response
-                if "result" in data and "alternatives" in data["result"]:
-                    return data["result"]["alternatives"][0]["content"]["text"]
-                return str(data)
-        except Exception as e:
-            return f"[LLM ERROR] {e}\n\n[LLM OUTPUT MOCK]\n{prompt[:200]}..."
-    
-    # Fallback to SDK (may have auth issues)
     try:
+        # SDK expects 'auth' parameter; pass the API key directly
         sdk = YCloudML(folder_id=folder, auth=key)
         model_name = os.getenv("YANDEX_MODEL", "yandexgpt") 
         model = sdk.models.completions(model_name)
         model = model.configure(temperature=float(os.getenv("YANDEX_TEMPERATURE", "0.3")))
         result = model.run(prompt)
-        return result.result.alternatives[0].text
+        return result.result.alternatives[0].content.text
+    except AttributeError:
+        # Try alternate response structure
+        try:
+            result = model.run(prompt)
+            return result.result.alternatives[0].text
+        except Exception as e:
+            return f"[LLM ERROR] Response parse error: {e}\n\n[LLM OUTPUT MOCK]\n{prompt[:200]}..."
     except Exception as e:
+        logger.error(f"Yandex GPT error: {e}")
         return f"[LLM ERROR] {e}\n\n[LLM OUTPUT MOCK]\n{prompt[:200]}..."
 
 
