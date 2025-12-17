@@ -22,6 +22,12 @@ try:
 except Exception:
     GEMINI_AVAILABLE = False
 
+try:
+    from yandex_cloud_ml_sdk import YCloudML
+    YANDEX_AVAILABLE = True
+except Exception:
+    YANDEX_AVAILABLE = False
+
 
 def gigachat_complete(prompt: str, api_key: Optional[str] = None) -> str:
     if not GIGACHAT_AVAILABLE:
@@ -66,6 +72,34 @@ def gemini_complete(prompt: str, api_key: Optional[str] = None, model_name: Opti
             if getattr(resp, "candidates", None)
             else str(resp)
         )
+    except Exception as e:
+        return f"[LLM ERROR] {e}\n\n[LLM OUTPUT MOCK]\n{prompt[:200]}..."
+
+
+def yandexgpt_complete(prompt: str, api_key: Optional[str] = None, folder_id: Optional[str] = None) -> str:
+    if not YANDEX_AVAILABLE:
+        return f"[LLM SDK NOT INSTALLED]\nInstall: pip install yandex-cloud-ml-sdk\n\n{prompt[:200]}..."
+    
+    key = api_key or os.getenv("YANDEX_API_KEY")
+    folder = folder_id or os.getenv("YANDEX_FOLDER_ID")
+
+    # Support "folder_id:api_key" format in key
+    if key and ":" in key and not folder:
+        parts = key.split(":", 1)
+        folder = parts[0]
+        key = parts[1]
+    
+    if not key or not folder:
+        return f"[LLM OUTPUT MOCK]\nYANDEX_API_KEY or YANDEX_FOLDER_ID missing\n\n{prompt[:200]}..."
+
+    try:
+        sdk = YCloudML(folder_id=folder, auth=key)
+        # Using yandexgpt-lite or yandexgpt depending on env or default
+        model_name = os.getenv("YANDEX_MODEL", "yandexgpt") 
+        model = sdk.models.completions(model_name)
+        model = model.configure(temperature=float(os.getenv("YANDEX_TEMPERATURE", "0.3")))
+        result = model.run(prompt)
+        return result.result.alternatives[0].text
     except Exception as e:
         return f"[LLM ERROR] {e}\n\n[LLM OUTPUT MOCK]\n{prompt[:200]}..."
 
@@ -137,6 +171,10 @@ def run_llm_correction(
         if API_BASE:
             return external_api_complete(prompt, tg_id=user_id, username=username)
         return "[GEMINI CONFIG MISSING] Set GEMINI_API_KEY or AI_API_BASE/AI_API_USER/AI_API_PASS"
+
+    if llm_choice == "yandex":
+        yandex_key = get_user_key(user_id, "yandex") or os.getenv("YANDEX_API_KEY")
+        return yandexgpt_complete(prompt, api_key=yandex_key)
 
     giga_key = get_user_key(user_id, "gigachat") or os.getenv("GIGACHAT_CREDENTIALS")
     return gigachat_complete(prompt, api_key=giga_key)

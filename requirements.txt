@@ -11,6 +11,7 @@ pdf2image
 # LLM провайдеры
 google-generativeai
 gigachat
+yandex-cloud-ml-sdk
 
 # Тестирование backend API
 pytest

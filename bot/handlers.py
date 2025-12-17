@@ -36,12 +36,12 @@ async def cmd_help(message: Message):
         "/start — начать и выбрать стратегию\n"
         "/strategy C — выбрать стратегию\n"
         "/lang rus|eng — выбрать язык OCR\n"
-        "/llm gigachat|gemini|api — выбрать провайдера LLM (api = внешний сервер)\n"
+        "/llm gigachat|gemini|yandex|api — выбрать провайдера LLM (api = внешний сервер)\n"
         "/debug on|off — включить/выключить вывод OCR и LLM\n"
         "/apilog — последние строки лога интеграции (AI_API_DEBUG=1)\n"
         "/testlogin — выполнить попытку логина и показать сырой ответ\n"
-        "/setkey <gigachat|gemini> <ключ> — сохранить личный API-ключ\n"
-        "/delkey <gigachat|gemini> — удалить личный API-ключ\n"
+        "/setkey <gigachat|gemini|yandex> <ключ> — сохранить личный API-ключ\n"
+        "/delkey <gigachat|gemini|yandex> — удалить личный API-ключ\n"
         "/mykeys — показать, какие ключи сохранены\n"
         "Пришлите фото/скан или документ для OCR и коррекции",
     )
@@ -80,11 +80,11 @@ async def cmd_llm(message: Message):
     logger.debug(f"/llm from={message.from_user.id} text={message.text}")
     args = (message.text or "").split()
     if len(args) < 2:
-        await message.answer("Укажите LLM: gigachat | gemini | api")
+        await message.answer("Укажите LLM: gigachat | gemini | yandex | api")
         return
     llm = args[1].lower()
-    if llm not in {"gigachat", "gemini", "api"}:
-        await message.answer("Допустимые значения: gigachat, gemini, api")
+    if llm not in {"gigachat", "gemini", "yandex", "api"}:
+        await message.answer("Допустимые значения: gigachat, gemini, yandex, api")
         return
     st = get_state(message.from_user.id)
     st["llm"] = "api" if llm == "gemini" else llm
@@ -94,8 +94,8 @@ async def cmd_llm(message: Message):
 async def cmd_setkey(message: Message):
     logger.debug(f"/setkey from={message.from_user.id} text_len={len(message.text or '')}")
     args = (message.text or "").split(maxsplit=2)
-    if len(args) < 3 or args[1].lower() not in {"gigachat", "gemini"}:
-        await message.answer("Использование: /setkey <gigachat|gemini> <ключ>")
+    if len(args) < 3 or args[1].lower() not in {"gigachat", "gemini", "yandex"}:
+        await message.answer("Использование: /setkey <gigachat|gemini|yandex> <ключ>\nДля Yandex: <folder_id>:<api_key>")
         return
     provider = args[1].lower()
     key = args[2].strip()
@@ -115,8 +115,8 @@ async def cmd_setkey(message: Message):
 async def cmd_delkey(message: Message):
     logger.debug(f"/delkey from={message.from_user.id} text={message.text}")
     args = (message.text or "").split(maxsplit=1)
-    if len(args) < 2 or args[1].lower() not in {"gigachat", "gemini"}:
-        await message.answer("Использование: /delkey <gigachat|gemini>")
+    if len(args) < 2 or args[1].lower() not in {"gigachat", "gemini", "yandex"}:
+        await message.answer("Использование: /delkey <gigachat|gemini|yandex>")
         return
     provider = args[1].lower()
     ok_local = delete_user_key(message.from_user.id, provider)
@@ -128,13 +128,14 @@ async def cmd_delkey(message: Message):
             f"Ключ для gemini удалён локально и {'удалён на сервере' if ok_srv else 'сервер: не найден/ошибка'}."
         )
     else:
-        await message.answer(f"Ключ для gigachat {'удалён' if ok_local else 'не найден'} локально.")
+        await message.answer(f"Ключ для {provider} {'удалён' if ok_local else 'не найден'} локально.")
 
 
 async def cmd_mykeys(message: Message):
     logger.debug(f"/mykeys from={message.from_user.id}")
     local = get_all_user_keys(message.from_user.id)
     has_giga_local = "✅" if "gigachat" in local else "—"
+    has_yandex_local = "✅" if "yandex" in local else "—"
     uid = message.from_user.id
     uname = message.from_user.username or str(uid)
     status = api_key_status(uid, uname)
@@ -147,7 +148,7 @@ async def cmd_mykeys(message: Message):
     else:
         has_gem_srv = "✅" if bool(status.get("gemini")) else "—"
     
-    await message.answer(f"Ключи:\nGigaChat (локально): {has_giga_local}\nGemini (сервер): {has_gem_srv}")
+    await message.answer(f"Ключи:\nGigaChat (локально): {has_giga_local}\nYandex (локально): {has_yandex_local}\nGemini (сервер): {has_gem_srv}")
 
 
 async def cmd_testlogin(message: Message):
