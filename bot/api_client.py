@@ -147,7 +147,7 @@ def _ensure_jwt(tg_id: int, username: str) -> Optional[str]:
     return API_JWT_BY_USER.get(tg_id)
 
 
-def api_ask_text(prompt: str, tg_id: int, username: str) -> str:
+def api_ask_text(prompt: str, tg_id: int, username: str, model: Optional[str] = None) -> str:
     if not API_BASE:
         _api_log("ask_skip", reason="no_base")
         return "[API NOT CONFIGURED] Set AI_API_BASE, AI_API_USER, AI_API_PASS"
@@ -155,9 +155,12 @@ def api_ask_text(prompt: str, tg_id: int, username: str) -> str:
     if not jwt:
         return "[API AUTH FAILED]"
     url = _api_url("/user/ai/text")
-    payload = json.dumps({"prompt": prompt}).encode("utf-8")
+    payload_dict = {"prompt": prompt}
+    if model:
+        payload_dict["model"] = model
+    payload = json.dumps(payload_dict).encode("utf-8")
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {jwt}"}
-    _api_log("ask_request", url=url, body=payload.decode("utf-8"))
+    _api_log("ask_request", url=url, body=payload.decode("utf-8"), model=model)
     req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
@@ -366,3 +369,142 @@ def api_has_gemini_key_cached(tg_id: int) -> Optional[bool]:
     None означает, что информации в кэше нет.
     """
     return API_HAS_GEMINI_KEY.get(tg_id)
+
+
+def api_get_text_models(tg_id: int, username: str) -> Dict[str, dict]:
+    """Получить список доступных текстовых моделей Gemini с сервера.
+    
+    Возвращает словарь вида:
+    {
+        "model_name": {
+            "display_name": "Display Name",
+            "description": "Description",
+            "is_available": bool,
+            ...
+        },
+        ...
+    }
+    
+    При ошибке возвращает пустой словарь.
+    """
+    if not API_BASE:
+        _api_log("get_models_skip", reason="no_base")
+        return {}
+    
+    jwt = _ensure_jwt(tg_id, username)
+    if not jwt:
+        _api_log("get_models_auth_failed", tg_id=tg_id)
+        return {}
+    
+    url = _api_url("/user/ai/models")
+    headers = {"Authorization": f"Bearer {jwt}"}
+    _api_log("get_models_request", url=url)
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            body_raw = resp.read().decode("utf-8")
+            _api_log("get_models_response", status=getattr(resp, "status", None), body_len=len(body_raw))
+            try:
+                data = json.loads(body_raw)
+                result: Dict[str, dict] = {}
+                
+                # Ожидаем структуру: {"data": {"models": [...]}, "status": "success"}
+                if isinstance(data, dict):
+                    models_list = None
+                    
+                    # Пробуем найти список моделей в разных местах
+                    if isinstance(data.get("data"), dict) and isinstance(data["data"].get("models"), list):
+                        models_list = data["data"]["models"]
+                    elif isinstance(data.get("models"), list):
+                        models_list = data["models"]
+                    
+                    if models_list:
+                        for model in models_list:
+                            if not isinstance(model, dict):
+                                continue
+                            
+                            name = model.get("name")
+                            if not name:
+                                continue
+                            
+                            # Фильтруем только текстовые модели
+                            category = model.get("category", "").lower()
+                            supported = model.get("supported_actions", [])
+                            
+                            # Берём модели, у которых категория "text" или поддерживают generateContent
+                            if category == "text" or "generateContent" in supported:
+                                is_available = model.get("is_available", True)
+                                result[name] = {
+                                    "display_name": model.get("display_name", name),
+                                    "description": model.get("description", ""),
+                                    "is_available": is_available,
+                                    "category": category,
+                                    "input_token_limit": model.get("input_token_limit", 0),
+                                    "output_token_limit": model.get("output_token_limit", 0),
+                                }
+                
+                _api_log("get_models_parsed", count=len(result))
+                return result
+            except Exception as parse_err:
+                _api_log("get_models_parse_error", error=parse_err)
+                return {}
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            _api_log("get_models_401_retry", tg_id=tg_id)
+            jwt2 = _ensure_jwt(tg_id, username)
+            if jwt2:
+                headers["Authorization"] = f"Bearer {jwt2}"
+                req = urllib.request.Request(url, headers=headers, method="GET")
+                try:
+                    with urllib.request.urlopen(req, timeout=15) as resp2:
+                        body_raw = resp2.read().decode("utf-8")
+                        _api_log("get_models_response_retry", status=getattr(resp2, "status", None), body_len=len(body_raw))
+                        try:
+                            data = json.loads(body_raw)
+                            result: Dict[str, dict] = {}
+                            
+                            if isinstance(data, dict):
+                                models_list = None
+                                if isinstance(data.get("data"), dict) and isinstance(data["data"].get("models"), list):
+                                    models_list = data["data"]["models"]
+                                elif isinstance(data.get("models"), list):
+                                    models_list = data["models"]
+                                
+                                if models_list:
+                                    for model in models_list:
+                                        if not isinstance(model, dict):
+                                            continue
+                                        name = model.get("name")
+                                        if not name:
+                                            continue
+                                        category = model.get("category", "").lower()
+                                        supported = model.get("supported_actions", [])
+                                        if category == "text" or "generateContent" in supported:
+                                            is_available = model.get("is_available", True)
+                                            result[name] = {
+                                                "display_name": model.get("display_name", name),
+                                                "description": model.get("description", ""),
+                                                "is_available": is_available,
+                                                "category": category,
+                                                "input_token_limit": model.get("input_token_limit", 0),
+                                                "output_token_limit": model.get("output_token_limit", 0),
+                                            }
+                            
+                            return result
+                        except Exception as parse_err:
+                            _api_log("get_models_retry_parse_error", error=parse_err)
+                            return {}
+                except Exception as e2:
+                    _api_log("get_models_retry_error", error=e2)
+                    return {}
+        
+        try:
+            err_body = e.read().decode("utf-8")
+        except Exception:
+            err_body = str(e)
+        _api_log("get_models_http_error", code=e.code, body_len=len(err_body))
+        return {}
+    except Exception as e:
+        _api_log("get_models_error", error=e)
+        return {}

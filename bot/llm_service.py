@@ -121,8 +121,8 @@ def yandexgpt_complete(prompt: str, api_key: Optional[str] = None, folder_id: Op
         return f"[LLM ERROR] {e}\n\n[LLM OUTPUT MOCK]\n{prompt[:200]}..."
 
 
-def external_api_complete(prompt: str, tg_id: int, username: str) -> str:
-    return api_ask_text(prompt, tg_id=tg_id, username=username)
+def external_api_complete(prompt: str, tg_id: int, username: str, model: Optional[str] = None) -> str:
+    return api_ask_text(prompt, tg_id=tg_id, username=username, model=model)
 
 
 def _ensure_gemini_key(tg_id: int, username: str) -> bool:
@@ -171,6 +171,7 @@ def run_llm_correction(
     llm: str,
     user_id: int,
     username: str,
+    model_name: Optional[str] = None,
 ) -> str:
     # Сейчас используем только стратегию C, но оставляем параметр для будущего
     prompt = prompt_strategy_C(text)
@@ -181,12 +182,16 @@ def run_llm_correction(
         if API_BASE and not force_local_gemini:
             if not _ensure_gemini_key(user_id, username):
                 return "[GEMINI API KEY MISSING]\nОтправьте ключ через настройки: Ключ Gemini."
-            return external_api_complete(prompt, tg_id=user_id, username=username)
+            # Используем переданную модель или дефолтную
+            model_to_use = model_name or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+            return external_api_complete(prompt, tg_id=user_id, username=username, model=model_to_use)
         gemini_key = get_user_key(user_id, "gemini") or os.getenv("GEMINI_API_KEY")
         if gemini_key:
-            return gemini_complete(prompt, api_key=gemini_key, model_name=os.getenv("GEMINI_MODEL"))
+            model_to_use = model_name or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+            return gemini_complete(prompt, api_key=gemini_key, model_name=model_to_use)
         if API_BASE:
-            return external_api_complete(prompt, tg_id=user_id, username=username)
+            model_to_use = model_name or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+            return external_api_complete(prompt, tg_id=user_id, username=username, model=model_to_use)
         return "[GEMINI CONFIG MISSING] Set GEMINI_API_KEY or AI_API_BASE/AI_API_USER/AI_API_PASS"
 
     if llm_choice == "yandex":

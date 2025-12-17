@@ -8,9 +8,9 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 from aiogram.exceptions import TelegramBadRequest
 
-from .api_client import API_DEBUG, API_LOG_FILE, api_login, api_register, api_key_status, api_set_key, api_clear_key
+from .api_client import API_DEBUG, API_LOG_FILE, api_login, api_register, api_key_status, api_set_key, api_clear_key, api_get_text_models
 from .user_keys import set_user_key, delete_user_key, get_all_user_keys
-from .keyboards import get_state, kb_main, kb_settings, token_status
+from .keyboards import get_state, kb_main, kb_settings, kb_models, token_status
 from .llm_service import run_ocr, run_llm_correction
 
 logger = logging.getLogger(__name__)
@@ -306,6 +306,44 @@ async def on_btn(query: CallbackQuery):
             await query.message.answer(
                 f"Отправьте одним сообщением ключ для {provider}. Он будет сохранён как ваш личный." + extra
             )
+    elif data == "select_model":
+        # Загружаем доступные модели с сервера
+        uid = query.from_user.id
+        uname = query.from_user.username or str(uid)
+        models = api_get_text_models(uid, uname)
+        
+        if not models:
+            await query.answer("❌ Не удалось загрузить модели. Проверьте подключение и токен.", show_alert=True)
+        else:
+            # Кэшируем модели в состояние
+            st["models_cache"] = models
+            kb = kb_models(uid, models)
+            try:
+                await query.message.edit_text(
+                    "🤖 Выберите модель для Gemini:",
+                    reply_markup=kb,
+                    parse_mode=ParseMode.HTML
+                )
+            except TelegramBadRequest as e:
+                logger.debug(f"edit_text skipped: {e}")
+        await query.answer()
+        return
+    elif data.startswith("set_model:"):
+        _, model_name = data.split(":", 1)
+        # Проверяем, есть ли эта модель в кэше (безопасность)
+        models_cache = st.get("models_cache", {})
+        if model_name in models_cache or len(models_cache) == 0:
+            # Если кэш пуст, позволяем всё равно установить (может быть юзер скопировал вручную)
+            st["model"] = model_name
+            logger.debug(f"set_model from={uid} model={model_name}")
+            
+            # Возвращаемся в настройки
+            st["settings_open"] = True
+            edited = True
+    elif data == "close_models":
+        # Возвращаемся в настройки
+        st["settings_open"] = True
+        edited = True
     elif data.startswith("del_key:"):
         _, provider = data.split(":", 1)
         if provider in {"gigachat", "gemini", "yandex"}:
@@ -362,8 +400,9 @@ async def on_photo(message: Message):
 
     strategy = st["strategy"]
     llm = st["llm"]
+    model = st.get("model", "gemini-2.5-flash")
     await message.answer(f"Коррекция LLM (стратегия {strategy}, {llm})...")
-    corrected = run_llm_correction(raw, strategy=strategy, llm=llm, user_id=message.from_user.id, username=message.from_user.username or str(message.from_user.id))
+    corrected = run_llm_correction(raw, strategy=strategy, llm=llm, user_id=message.from_user.id, username=message.from_user.username or str(message.from_user.id), model_name=model)
     logger.debug(f"LLM corrected len={len(corrected)}")
 
     async def safe_send(text: str):
@@ -416,12 +455,14 @@ async def on_document(message: Message):
             return
         strategy = st["strategy"]
         llm = st["llm"]
+        model = st.get("model", "gemini-2.5-flash")
         corrected = run_llm_correction(
             raw,
             strategy=strategy,
             llm=llm,
             user_id=message.from_user.id,
             username=message.from_user.username or str(message.from_user.id),
+            model_name=model,
         )
         if st["debug"]:
             def html_escape(s: str) -> str:
@@ -454,12 +495,14 @@ async def on_document(message: Message):
             combined = "\n\n".join(all_text)
             strategy = st["strategy"]
             llm = st["llm"]
+            model = st.get("model", "gemini-2.5-flash")
             corrected = run_llm_correction(
                 combined,
                 strategy=strategy,
                 llm=llm,
                 user_id=message.from_user.id,
                 username=message.from_user.username or str(message.from_user.id),
+                model_name=model,
             )
             if st["debug"]:
                 def html_escape(s: str) -> str:
