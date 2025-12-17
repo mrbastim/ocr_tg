@@ -22,9 +22,8 @@ from __future__ import annotations
 import argparse
 import random
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple
+from typing import Iterable, List, Optional
 
 from ocr.base import get_raw_text, normalize_whitespace
 from .event_logger import log_event, LOG_FILE
@@ -87,7 +86,6 @@ def run_batch_import(
     provider: str,
     recursive: bool,
     max_files: Optional[int] = None,
-    workers: int = 1,
 ) -> int:
     """Запустить пакетную обработку для всех изображений в каталоге.
 
@@ -104,6 +102,7 @@ def run_batch_import(
         random.shuffle(images)
         images = images[:max_files]
 
+<<<<<<< HEAD
     workers = max(1, int(workers))
 
     # Последовательно (по умолчанию), чтобы не загружать слабые машины
@@ -139,6 +138,16 @@ def run_batch_import(
                 count += 1
             except Exception as e:
                 print(f"[SKIP] {e}")
+=======
+    count = 0
+    for img_path in images:
+        try:
+            process_image(img_path, lang=lang, user_id=user_id, provider=provider, source="offline_batch")
+            count += 1
+        except Exception as e:
+            # В учебном скрипте просто печатаем ошибку и идём дальше
+            print(f"[SKIP] {img_path}: {e}")
+>>>>>>> parent of 21ff183 (Добавить поддержку параллельной обработки изображений с использованием ProcessPoolExecutor и параметра для настройки количества рабочих процессов)
 
     return count
 
@@ -178,12 +187,6 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Ограничить число обрабатываемых файлов (берём случайные)",
     )
-    parser.add_argument(
-        "--workers",
-        type=int,
-        default=1,
-        help="Число параллельных OCR-процессов (по умолчанию 1)",
-    )
     return parser.parse_args()
 
 
@@ -201,7 +204,6 @@ def main() -> None:
         provider=args.provider,
         recursive=recursive,
         max_files=args.max_files,
-        workers=args.workers,
     )
     print(f"Готово. Обработано файлов: {n}.")
     if LOG_FILE.exists():
