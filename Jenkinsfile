@@ -90,7 +90,7 @@ pipeline {
                   -v ml_output:/app/ml_output \
                   -w /app \
                   ${IMAGE_NAME}:${BUILD_NUMBER} \
-                  python -m ml.batch_import --dir /data --lang rus+eng --provider Jenkins --max-files 150 --workers 6
+                  python -m ml.batch_import --dir /data --lang rus+eng --provider Jenkins --max-files 150
                 '''
             }
         }

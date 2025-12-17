@@ -7,7 +7,7 @@ from __future__ import annotations
 1. Скинуть папку с картинками (jpg/png/jpeg) в корень проекта, например `dataset/`.
 2. Запустить из корня:
 
-    python -m ml.batch_import --dir dataset --lang rus+eng --workers 4
+    python -m ml.batch_import --dir dataset --lang rus+eng
 
 3. Скрипт для КАЖДОГО изображения:
    - запустит OCR (через ocr.base.get_raw_text),
@@ -22,7 +22,6 @@ from __future__ import annotations
 import argparse
 import random
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Iterable, List, Optional
 
@@ -78,7 +77,6 @@ def run_batch_import(
     provider: str,
     recursive: bool,
     max_files: Optional[int] = None,
-    workers: int = 4,
 ) -> int:
     """Запустить пакетную обработку для всех изображений в каталоге.
 
@@ -95,25 +93,21 @@ def run_batch_import(
         random.shuffle(images)
         images = images[:max_files]
 
-    print(f"Найдено изображений: {len(images)}. Обработка на {workers} потоках...")
+    total = len(images)
+    print(f"Найдено изображений: {total}. Начинаю обработку...")
     
     count = 0
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        # Запускаем обработку параллельно
-        futures = {
-            executor.submit(process_image, img_path, lang=lang, user_id=user_id, provider=provider, source="offline_batch"): img_path
-            for img_path in images
-        }
-        
-        for future in as_completed(futures):
-            img_path = futures[future]
-            try:
-                future.result()
-                count += 1
-                if count % 10 == 0:
-                    print(f"Обработано: {count}/{len(images)}")
-            except Exception as e:
-                print(f"[SKIP] {img_path}: {e}")
+    for i, img_path in enumerate(images, 1):
+        try:
+            process_image(img_path, lang=lang, user_id=user_id, provider=provider, source="offline_batch")
+            count += 1
+            
+            # Показываем прогресс каждые 10 файлов или на последнем
+            if i % 10 == 0 or i == total:
+                percent = (i / total) * 100
+                print(f"Прогресс: {i}/{total} ({percent:.1f}%) | Успешно: {count}")
+        except Exception as e:
+            print(f"[SKIP] {img_path.name}: {e}")
 
     return count
 
@@ -153,12 +147,6 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Ограничить число обрабатываемых файлов (берём случайные)",
     )
-    parser.add_argument(
-        "--workers",
-        type=int,
-        default=4,
-        help="Количество параллельных потоков для обработки (по умолчанию 4)",
-    )
     return parser.parse_args()
 
 
@@ -176,7 +164,6 @@ def main() -> None:
         provider=args.provider,
         recursive=recursive,
         max_files=args.max_files,
-        workers=args.workers,
     )
     print(f"Готово. Обработано файлов: {n}.")
     if LOG_FILE.exists():
