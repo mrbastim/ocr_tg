@@ -544,17 +544,6 @@ async def on_photo(message: Message):
     local_path = os.path.join(tmp_dir, f"{photo.file_id}.jpg")
     await message.bot.download_file(file.file_path, local_path)
 
-    # Сначала — быстрая оценка времени обработки по изображению и запоминание признаков
-    predicted_time = None
-    feats = None
-    if extract_image_features and predict_ocr_time:
-        try:
-            feats = extract_image_features(local_path, "")
-            predicted_time = predict_ocr_time(feats)
-            await message.answer(f"Это займёт примерно {predicted_time:.1f} секунды обработки.")
-        except Exception as e:
-            logger.debug(f"processing time estimate failed: {e}")
-
     st = get_state(message.from_user.id)
     lang = st["lang"]
     await message.answer(f"Выполняю OCR (язык {lang})...")
@@ -572,6 +561,18 @@ async def on_photo(message: Message):
 
     strategy = st["strategy"]
     llm = st["llm"]
+    
+    # Оценка времени ПОСЛЕ OCR (когда известен реальный text для word_count)
+    predicted_time = None
+    feats = None
+    if extract_image_features and predict_ocr_time:
+        try:
+            feats = extract_image_features(local_path, raw)
+            predicted_time = predict_ocr_time(feats)
+            await message.answer(f"Это займёт примерно {predicted_time:.1f} секунды обработки.")
+        except Exception as e:
+            logger.debug(f"processing time estimate failed: {e}")
+    
     await message.answer(f"Коррекция LLM (стратегия {strategy}, {llm})...")
     corrected = run_llm_correction(
         raw,
@@ -603,8 +604,13 @@ async def on_photo(message: Message):
         await send_llm_result(corrected, extra)
 
     # Логируем событие обработки для последующего анализа
-    if log_event and feats is not None:
+    if log_event:
         try:
+            if feats is None and extract_image_features:
+                try:
+                    feats = extract_image_features(local_path, raw)
+                except Exception:
+                    pass
             ocr_time = t1 - t0
             total_time = t2 - t0
             log_event(
@@ -648,17 +654,6 @@ async def on_document(message: Message):
         except TelegramBadRequest:
             return await message.answer(text[:4000])
 
-    # Быстрая оценка времени обработки для изображений + подготовка признаков
-    predicted_time = None
-    feats = None
-    if extract_image_features and predict_ocr_time and mime.startswith("image/"):
-        try:
-            feats = extract_image_features(local_path, "")
-            predicted_time = predict_ocr_time(feats)
-            await message.answer(f"Это займёт примерно {predicted_time:.1f} секунды обработки.")
-        except Exception as e:
-            logger.debug(f"processing time estimate (document) failed: {e}")
-
     if mime.startswith("image/"):
         await message.answer("Обнаружено изображение в документе. Выполняю OCR...")
         try:
@@ -672,6 +667,18 @@ async def on_document(message: Message):
             return
         strategy = st["strategy"]
         llm = st["llm"]
+        
+        # Оценка времени ПОСЛЕ OCR
+        predicted_time = None
+        feats = None
+        if extract_image_features and predict_ocr_time:
+            try:
+                feats = extract_image_features(local_path, raw)
+                predicted_time = predict_ocr_time(feats)
+                await message.answer(f"Это займёт примерно {predicted_time:.1f} секунды обработки.")
+            except Exception as e:
+                logger.debug(f"processing time estimate (document) failed: {e}")
+        
         corrected = run_llm_correction(
             raw,
             strategy=strategy,
@@ -689,8 +696,13 @@ async def on_document(message: Message):
         else:
             await send_llm_result(corrected, extra, llm)
         # логирование события
-        if log_event and feats is not None:
+        if log_event:
             try:
+                if feats is None and extract_image_features:
+                    try:
+                        feats = extract_image_features(local_path, raw)
+                    except Exception:
+                        pass
                 ocr_time = t1 - t0
                 total_time = t2 - t0
                 log_event(
