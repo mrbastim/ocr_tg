@@ -102,43 +102,6 @@ def run_batch_import(
         random.shuffle(images)
         images = images[:max_files]
 
-<<<<<<< HEAD
-    workers = max(1, int(workers))
-
-    # Последовательно (по умолчанию), чтобы не загружать слабые машины
-    if workers == 1:
-        count = 0
-        for img_path in images:
-            try:
-                process_image(img_path, lang=lang, user_id=user_id, provider=provider, source="offline_batch")
-                count += 1
-            except Exception as e:
-                # В учебном скрипте просто печатаем ошибку и идём дальше
-                print(f"[SKIP] {img_path}: {e}")
-        return count
-
-    # Параллельный режим: OCR в отдельных процессах, запись логов — в главном
-    count = 0
-    with ProcessPoolExecutor(max_workers=workers) as pool:
-        futures = [pool.submit(_worker_ocr, str(p), lang) for p in images]
-        for fut in as_completed(futures):
-            try:
-                path_str, text, ocr_time = fut.result()
-                log_event(
-                    image_path=path_str,
-                    text=text,
-                    user_id=user_id,
-                    provider=provider,
-                    source="offline_batch",
-                    is_pdf=False,
-                    t_ocr=ocr_time,
-                    t_total=ocr_time,
-                    predicted_time=None,
-                )
-                count += 1
-            except Exception as e:
-                print(f"[SKIP] {e}")
-=======
     count = 0
     for img_path in images:
         try:
@@ -147,7 +110,6 @@ def run_batch_import(
         except Exception as e:
             # В учебном скрипте просто печатаем ошибку и идём дальше
             print(f"[SKIP] {img_path}: {e}")
->>>>>>> parent of 21ff183 (Добавить поддержку параллельной обработки изображений с использованием ProcessPoolExecutor и параметра для настройки количества рабочих процессов)
 
     return count
 
