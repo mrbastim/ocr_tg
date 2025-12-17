@@ -83,7 +83,7 @@ def kb_settings(user_id: int) -> InlineKeyboardMarkup:
         # Показываем текущую модель и кнопку для её изменения
         keyboard.append([
             InlineKeyboardButton(
-                text=f"🤖 Модель: {current_model[:20]}", 
+                text=f"🤖 Модель: {current_model}", 
                 callback_data="select_model"
             ),
         ])
@@ -151,8 +151,8 @@ def kb_models(user_id: int, models: Dict[str, dict]) -> InlineKeyboardMarkup:
                 is_available = model_info.get("is_available", True)
                 is_selected = model_name == current_model
                 
-                # Сокращаем длинные названия
-                btn_text = display_name[:15]
+                # Используем полное название без обрезания
+                btn_text = display_name
                 if is_selected:
                     btn_text = f"✅ {btn_text}"
                 elif not is_available:
