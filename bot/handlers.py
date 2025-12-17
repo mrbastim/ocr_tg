@@ -108,6 +108,8 @@ async def cmd_setkey(message: Message):
             await message.answer("Ключ для gemini сохранён на сервере и локально.")
         else:
             await message.answer("Ключ для gemini сохранён локально. Сервер: ошибка, смотрите /apilog.")
+    elif provider == "yandex":
+        await message.answer("Ключ для yandex сохранён локально. Формат: <folder_id>:<api_key>")
     else:
         await message.answer("Ключ для gigachat сохранён локально.")
 
@@ -244,7 +246,7 @@ async def on_btn(query: CallbackQuery):
     elif data.startswith("set_llm:"):
         _, val = data.split(":", 1)
         llm = val.lower()
-        if llm in {"gigachat", "gemini"}:
+        if llm in {"gigachat", "gemini", "yandex"}:
             st["llm"] = "api" if llm == "gemini" else llm
             edited = True
     elif data.startswith("set_lang:"):
@@ -298,15 +300,15 @@ async def on_btn(query: CallbackQuery):
             await query.message.answer("Регистрация не удалась. Проверьте логи через /apilog.")
     elif data.startswith("set_key:"):
         _, provider = data.split(":", 1)
-        if provider in {"gigachat", "gemini"}:
+        if provider in {"gigachat", "gemini", "yandex"}:
             st.setdefault("await_key_provider", provider)
-            extra = " И отправлен на сервер." if provider == "gemini" else ""
+            extra = " И отправлен на сервер." if provider == "gemini" else (" Формат: <folder_id>:<api_key>" if provider == "yandex" else "")
             await query.message.answer(
                 f"Отправьте одним сообщением ключ для {provider}. Он будет сохранён как ваш личный." + extra
             )
     elif data.startswith("del_key:"):
         _, provider = data.split(":", 1)
-        if provider in {"gigachat", "gemini"}:
+        if provider in {"gigachat", "gemini", "yandex"}:
             uid = query.from_user.id
             uname = query.from_user.username or str(uid)
             ok_local = delete_user_key(uid, provider)
@@ -497,6 +499,8 @@ async def on_text(message: Message):
                 await message.answer("Ключ для gemini сохранён на сервере и локально.")
             else:
                 await message.answer("Ключ для gemini сохранён локально. Сервер: ошибка, смотрите /apilog.")
+        elif provider == "yandex":
+            await message.answer("Ключ для yandex сохранён локально. Формат поддерживается: <folder_id>:<api_key>.")
         else:
             await message.answer("Ключ для gigachat сохранён локально.")
         return
