@@ -8,6 +8,7 @@ from typing import Dict, Optional, Any
 import cv2
 import numpy as np
 import joblib
+import pandas as pd
 
 
 @dataclass
@@ -116,9 +117,12 @@ def predict_ocr_time(features: ImageFeatures) -> float:
             "word_count": float(features.word_count),
         }
         if feature_names:
-            x_vec = [feat_map.get(name, 0.0) for name in feature_names]
+            # Передаём именованные признаки, чтобы не ловить предупреждения sklearn о пропавших колонках
+            x_vec = pd.DataFrame([
+                {name: feat_map.get(name, 0.0) for name in feature_names}
+            ])
             try:
-                pred = model.predict([x_vec])[0]
+                pred = model.predict(x_vec)[0]
                 t = float(pred)
                 if np.isfinite(t):
                     # Ограничиваем разумный диапазон

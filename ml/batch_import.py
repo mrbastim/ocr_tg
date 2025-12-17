@@ -20,9 +20,10 @@ from __future__ import annotations
 """
 
 import argparse
+import random
 import time
 from pathlib import Path
-from typing import Iterable, List
+from typing import Iterable, List, Optional
 
 from ocr.base import get_raw_text, normalize_whitespace
 from .event_logger import log_event, LOG_FILE
@@ -68,7 +69,15 @@ def process_image(path: Path, *, lang: str, user_id: int, provider: str, source:
     )
 
 
-def run_batch_import(directory: str, *, lang: str, user_id: int, provider: str, recursive: bool) -> int:
+def run_batch_import(
+    directory: str,
+    *,
+    lang: str,
+    user_id: int,
+    provider: str,
+    recursive: bool,
+    max_files: Optional[int] = None,
+) -> int:
     """Запустить пакетную обработку для всех изображений в каталоге.
 
     Возвращает количество успешно обработанных файлов.
@@ -78,8 +87,14 @@ def run_batch_import(directory: str, *, lang: str, user_id: int, provider: str, 
     if not root.exists() or not root.is_dir():
         raise FileNotFoundError(f"Каталог не найден или не является папкой: {root}")
 
+    images = list(iter_images(root, recursive=recursive))
+
+    if max_files is not None:
+        random.shuffle(images)
+        images = images[:max_files]
+
     count = 0
-    for img_path in iter_images(root, recursive=recursive):
+    for img_path in images:
         try:
             process_image(img_path, lang=lang, user_id=user_id, provider=provider, source="offline_batch")
             count += 1
@@ -119,6 +134,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Не искать файлы рекурсивно, только в указанной папке",
     )
+    parser.add_argument(
+        "--max-files",
+        type=int,
+        default=None,
+        help="Ограничить число обрабатываемых файлов (берём случайные)",
+    )
     return parser.parse_args()
 
 
@@ -129,7 +150,14 @@ def main() -> None:
     print(f"Язык OCR: {args.lang}")
     print(f"user_id для логов: {args.user_id}, provider: {args.provider}")
 
-    n = run_batch_import(args.dir, lang=args.lang, user_id=args.user_id, provider=args.provider, recursive=recursive)
+    n = run_batch_import(
+        args.dir,
+        lang=args.lang,
+        user_id=args.user_id,
+        provider=args.provider,
+        recursive=recursive,
+        max_files=args.max_files,
+    )
     print(f"Готово. Обработано файлов: {n}.")
     if LOG_FILE.exists():
         print(f"Логи записаны в: {LOG_FILE.resolve()}")

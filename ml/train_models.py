@@ -52,6 +52,44 @@ def load_csv_dataset(path: Path, target_col: str) -> Tuple[pd.DataFrame, pd.Seri
     return X, y
 
 
+def prepare_classification_dataset(
+    X: pd.DataFrame,
+    y: pd.Series,
+    *,
+    max_bins: int = 6,
+    min_per_class: int = 2,
+) -> Tuple[Optional[pd.DataFrame], Optional[pd.Series], pd.Series]:
+    """Приводит целевую переменную к дискретным классам и убирает редкие метки.
+
+    Возвращает (X_filtered, y_filtered, class_counts). Если после фильтрации классов
+    меньше двух или выборка слишком мала, возвращает (None, None, class_counts).
+    """
+
+    y_proc = y.copy()
+
+    # Если target числовой и уникальных значений много, бинним по квантилям,
+    # чтобы избежать классов с одним объектом.
+    if np.issubdtype(y_proc.dtype, np.number) and y_proc.nunique() > max_bins:
+        y_proc = pd.qcut(y_proc, q=max_bins, duplicates="drop")
+
+    y_proc = y_proc.astype(str)
+
+    # Убираем классы реже заданного порога
+    value_counts = y_proc.value_counts()
+    rare_classes = value_counts[value_counts < min_per_class].index
+    if len(rare_classes):
+        mask = ~y_proc.isin(rare_classes)
+        y_proc = y_proc[mask]
+        X = X.loc[mask]
+
+    value_counts = y_proc.value_counts()
+
+    if y_proc.nunique() < 2 or len(y_proc) < 4:
+        return None, None, value_counts
+
+    return X, y_proc, value_counts
+
+
 def run_regression(X: pd.DataFrame, y: pd.Series) -> Dict[str, float]:
     print("=== Линейная регрессия ===")
     X_train, X_test, y_train, y_test = train_test_split(
@@ -102,8 +140,12 @@ def run_regression(X: pd.DataFrame, y: pd.Series) -> Dict[str, float]:
 
 def run_classification(X: pd.DataFrame, y: pd.Series) -> Dict[str, Dict[str, float]]:
     print("=== Классификация: логистическая регрессия, SVM, MLP ===")
+    n_classes = len(np.unique(y))
+    n_samples = len(y)
+    test_size = max(0.2, n_classes / n_samples + 0.01)
+    test_size = min(test_size, 0.5)  # не отдаём в тест больше половины датасета
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
+        X, y, test_size=test_size, random_state=42, stratify=y
     )
 
     scaler = StandardScaler()
@@ -246,12 +288,11 @@ def run_all(csv_path: Optional[str] = None, target_col: Optional[str] = None) ->
     print(f"Загружаю CSV датасет: {csv_path}")
     X_full, y = load_csv_dataset(csv_path, target_col)
 
-    y_cls = y
-    if not np.issubdtype(y_cls.dtype, np.number):
+    if not np.issubdtype(y.dtype, np.number):
         raise ValueError(
             "Для регрессии нужен числовой числовой target; используйте CSV, где целевая колонка — число (например, время обработки)."
         )
-    y_reg = y_cls.astype(float)
+    y_reg = y.astype(float)
 
     # Для регрессии стараемся использовать те же признаки, что и в боте
     preferred_cols = [
@@ -272,8 +313,22 @@ def run_all(csv_path: Optional[str] = None, target_col: Optional[str] = None) ->
     print(f"Форма X_full (для классификации/кластеризации): {X_full.shape}")
 
     metrics_reg = run_regression(X_reg, y_reg)
-    metrics_cls = run_classification(X_full, y_cls)
-    metrics_clu = run_clustering(X_full, y_cls)
+
+    X_cls, y_cls, class_counts = prepare_classification_dataset(X_full, y_reg)
+    if X_cls is None or y_cls is None:
+        print(
+            "Пропускаю классификацию/кластеризацию: после биннинга/фильтрации осталось меньше двух классов."
+        )
+        if not class_counts.empty:
+            print("Распределение классов:")
+            print(class_counts.to_string())
+        metrics_cls = {}
+        metrics_clu = {}
+    else:
+        print("Распределение классов после биннинга/фильтрации:")
+        print(class_counts.to_string())
+        metrics_cls = run_classification(X_cls, y_cls)
+        metrics_clu = run_clustering(X_cls, y_cls)
 
     return {
         "n_samples": int(X_full.shape[0]),
