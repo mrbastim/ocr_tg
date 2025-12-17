@@ -67,6 +67,9 @@ def kb_settings(user_id: int) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(text=mark("LLM: GigaChat", llm == "gigachat"), callback_data="set_llm:gigachat"),
+                InlineKeyboardButton(text=mark("LLM: Yandex", llm == "yandex"), callback_data="set_llm:yandex"),
+            ],
+            [
                 InlineKeyboardButton(
                     text=mark("LLM: Gemini", llm in {"gemini", "api"}), callback_data="set_llm:gemini"
                 ),
@@ -81,6 +84,9 @@ def kb_settings(user_id: int) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text=mark("Debug", debug), callback_data="toggle_debug")],
             [
                 InlineKeyboardButton(text="🔑 Ключ GigaChat", callback_data="set_key:gigachat"),
+                InlineKeyboardButton(text="🔑 Ключ Yandex", callback_data="set_key:yandex"),
+            ],
+            [
                 InlineKeyboardButton(
                     text=f"🔑 Ключ Gemini {'✅' if has_gemini else '❌'}",
                     callback_data="set_key:gemini",
@@ -88,6 +94,9 @@ def kb_settings(user_id: int) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(text="❌ Удалить GigaChat", callback_data="del_key:gigachat"),
+                InlineKeyboardButton(text="❌ Удалить Yandex", callback_data="del_key:yandex"),
+            ],
+            [
                 InlineKeyboardButton(text="❌ Удалить Gemini", callback_data="del_key:gemini"),
             ],
             [
