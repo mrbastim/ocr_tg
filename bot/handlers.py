@@ -41,9 +41,10 @@ except Exception:
     log_event = None
 
 try:
-    from ml.stats_plots import build_basic_plots
+    from ml.stats_plots import build_basic_plots, build_correlation_heatmap
 except Exception:
     build_basic_plots = None
+    build_correlation_heatmap = None
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +167,31 @@ async def cmd_ml_stats(message: Message):
             await message.answer_photo(photo, caption=caption)
         except Exception as e:
             logger.debug(f"send plot failed for {path}: {e}")
+
+
+async def cmd_ml_correlations(message: Message):
+    logger.debug(f"/ml_correlations from={message.from_user.id}")
+    if build_correlation_heatmap is None:
+        await message.answer("Анализ корреляций недоступен в этом окружении.")
+        return
+
+    try:
+        path, caption = build_correlation_heatmap()
+    except FileNotFoundError:
+        await message.answer("Пока нет логов обработки изображений. Отправьте несколько картинок боту.")
+        return
+    except Exception as e:
+        logger.exception("build_correlation_heatmap failed")
+        await message.answer(f"Ошибка при построении матрицы корреляций: {e}")
+        return
+
+    from aiogram.types import FSInputFile
+
+    try:
+        photo = FSInputFile(path)
+        await message.answer_photo(photo, caption=caption)
+    except Exception as e:
+        logger.debug(f"send correlation plot failed: {e}")
 
 
 async def cmd_ml_requirements(message: Message):
@@ -844,6 +870,7 @@ def register_handlers(dp):
     dp.message.register(cmd_mykeys, F.text.startswith("/mykeys"))
     dp.message.register(cmd_ml_demo, F.text.startswith("/ml_demo"))
     dp.message.register(cmd_ml_stats, F.text.startswith("/ml_stats"))
+    dp.message.register(cmd_ml_correlations, F.text.startswith("/ml_correlations"))
     dp.message.register(cmd_ml_requirements, F.text.startswith("/ml_requirements"))
 
     dp.callback_query.register(on_btn)

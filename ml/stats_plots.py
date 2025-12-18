@@ -5,6 +5,7 @@ from typing import List, Tuple
 
 import matplotlib.pyplot as plt
 import pandas as pd
+import seaborn as sns
 
 from .event_logger import LOG_FILE, LOG_DIR
 
@@ -15,6 +16,47 @@ PLOTS_DIR = LOG_DIR / "plots_stats"
 def _ensure_dirs() -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     PLOTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def build_correlation_heatmap() -> Tuple[Path, str]:
+    """Построить тепловую карту корреляций признаков с ocr_time.
+    
+    Возвращает (путь_к_png, подпись).
+    """
+    _ensure_dirs()
+    
+    if not LOG_FILE.exists():
+        raise FileNotFoundError("Файл логов не найден. Пока нет обработанных изображений.")
+    
+    df = pd.read_csv(LOG_FILE, on_bad_lines='skip')
+    
+    # Выбираем только числовые колонки
+    numeric_cols = df.select_dtypes(include=['number']).columns
+    
+    # Вычисляем корреляции
+    corr_matrix = df[numeric_cols].corr()
+    
+    # Строим тепловую карту
+    plt.figure(figsize=(12, 10))
+    sns.heatmap(
+        corr_matrix,
+        annot=True,
+        fmt='.2f',
+        cmap='coolwarm',
+        center=0,
+        square=True,
+        cbar_kws={'label': 'Коэффициент корреляции'},
+        vmin=-1,
+        vmax=1
+    )
+    plt.title('Матрица корреляций признаков')
+    plt.tight_layout()
+    
+    path = PLOTS_DIR / "correlation_heatmap.png"
+    plt.savefig(path, dpi=150)
+    plt.close()
+    
+    return path, "Матрица корреляций всех признаков"
 
 
 def build_basic_plots() -> List[Tuple[Path, str]]:
@@ -28,7 +70,7 @@ def build_basic_plots() -> List[Tuple[Path, str]]:
     if not LOG_FILE.exists():
         raise FileNotFoundError("Файл логов не найден. Пока нет обработанных изображений.")
 
-    df = pd.read_csv(LOG_FILE)
+    df = pd.read_csv(LOG_FILE, on_bad_lines='skip')
     imgs: List[Tuple[Path, str]] = []
 
     # 1. Гистограмма времени обработки (факт и прогноз)
