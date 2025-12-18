@@ -53,31 +53,56 @@ def load_csv_dataset(path: Path, target_col: str) -> Tuple[pd.DataFrame, pd.Seri
     return X, y
 
 
-def remove_outliers(X: pd.DataFrame, y: pd.Series, threshold: float = 3.0) -> Tuple[pd.DataFrame, pd.Series]:
-    """Удаляет выбросы по z-score для таргета.
+def remove_outliers(
+    X: pd.DataFrame, 
+    y: pd.Series, 
+    threshold: float = 3.0, 
+    max_value: Optional[float] = 1000.0
+) -> Tuple[pd.DataFrame, pd.Series]:
+    """Удаляет выбросы в два этапа: абсолютный фильтр + z-score.
     
     Args:
         X: признаки
         y: таргет
         threshold: порог z-score (обычно 3.0)
+        max_value: максимальное абсолютное значение; значения выше удаляются первыми
+                   (None чтобы отключить)
     
     Returns:
         X и y без выбросов
     """
     from scipy import stats
     
-    # Вычисляем z-score для таргета
-    z_scores = np.abs(stats.zscore(y))
+    original_len = len(y)
     
-    # Оставляем только строки, где z-score < threshold
-    mask = z_scores < threshold
+    # Этап 1: абсолютный фильтр по максимальному значению
+    if max_value is not None:
+        mask_abs = y <= max_value
+        removed_abs = (~mask_abs).sum()
+        if removed_abs > 0:
+            print(f"⚠️  Этап 1 - Удалено {removed_abs} значений выше {max_value}s")
+            print(f"   Диапазон удалённых: {y[~mask_abs].min():.2f} - {y[~mask_abs].max():.2f}s")
+        X = X[mask_abs]
+        y = y[mask_abs]
+    else:
+        removed_abs = 0
     
-    removed = (~mask).sum()
-    if removed > 0:
-        print(f"⚠️  Удалено {removed} выбросов (z-score > {threshold})")
-        print(f"   Диапазон удалённых значений: {y[~mask].min():.2f} - {y[~mask].max():.2f}")
+    # Этап 2: z-score фильтр на оставшихся данных
+    if len(y) > 0:
+        z_scores = np.abs(stats.zscore(y))
+        mask_zscore = z_scores < threshold
+        removed_zscore = (~mask_zscore).sum()
+        if removed_zscore > 0:
+            print(f"⚠️  Этап 2 - Удалено {removed_zscore} выбросов (z-score > {threshold})")
+            print(f"   Диапазон удалённых: {y[~mask_zscore].min():.2f} - {y[~mask_zscore].max():.2f}s")
+        X = X[mask_zscore]
+        y = y[mask_zscore]
     
-    return X[mask], y[mask]
+    total_removed = original_len - len(y)
+    print(f"\n📊 Итого: удалено {total_removed}/{original_len} сэмплов ({100*total_removed/original_len:.1f}%)")
+    print(f"   Осталось: {len(y)} сэмплов\n")
+    
+    return X, y
 
 
 def prepare_classification_dataset(
@@ -128,10 +153,13 @@ def run_regression(X: pd.DataFrame, y: pd.Series) -> Dict[str, float]:
     print(f"  Мин: {y.min():.2f}, Макс: {y.max():.2f}")
     print(f"  Std: {y.std():.2f}")
     
-    # Удаляем выбросы (время > 60 секунд явно аномалия для OCR одного изображения)
-    print(f"\nОчистка выбросов...")
-    X_clean, y_clean = remove_outliers(X, y, threshold=3.0)
-    print(f"Осталось сэмплов: {len(y_clean)}/{len(y)}")
+    # Удаляем выбросы в два этапа:
+    # 1. Абсолютный фильтр: все выше 1000 секунд удаляются
+    # 2. Z-score фильтр: статистические выбросы в оставшихся данных
+    print(f"\n{'='*50}")
+    print(f"Очистка выбросов (2 этапа)...")
+    print(f"{'='*50}")
+    X_clean, y_clean = remove_outliers(X, y, threshold=3.0, max_value=1000.0)
     
     # Добавляем дополнительные признаки для лучшего предсказания
     X_enhanced = X_clean.copy()
