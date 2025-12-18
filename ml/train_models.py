@@ -161,6 +161,18 @@ def run_regression(X: pd.DataFrame, y: pd.Series) -> Dict[str, float]:
     print(f"{'='*50}")
     X_clean, y_clean = remove_outliers(X, y, threshold=3.0, max_value=1000.0)
     
+    # Анализ корреляции признаков с таргетом
+    print(f"\n{'='*50}")
+    print(f"Корреляция признаков с ocr_time:")
+    print(f"{'='*50}")
+    corr_data = X_clean.copy()
+    corr_data['ocr_time'] = y_clean
+    correlations = corr_data.corr()['ocr_time'].drop('ocr_time').sort_values(ascending=False)
+    for feat, corr_val in correlations.items():
+        symbol = "✓" if abs(corr_val) > 0.3 else "✗" if abs(corr_val) > 0.1 else "—"
+        print(f"  {symbol} {feat:20s}: {corr_val:6.3f}")
+    print(f"\nИнтерпретация: |r| > 0.3 = сильная, > 0.1 = слабая, < 0.1 = почти нет\n")
+    
     # Добавляем дополнительные признаки для лучшего предсказания
     X_enhanced = X_clean.copy()
     if 'megapixels' in X_clean.columns:
