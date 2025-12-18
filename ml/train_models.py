@@ -187,16 +187,31 @@ def run_regression(X: pd.DataFrame, y: pd.Series) -> Dict[str, float]:
         X_enhanced, y_clean, test_size=0.2, random_state=42
     )
 
-    # Поскольку корреляции с признаками практически нет,
-    # используем простое baseline-решение: медиану
-    print(f"\n⚠️  ВАЖНО: Корреляция признаков с ocr_time очень слабая.")
-    print(f"   Используем медиану как baseline-предсказание.\n")
+    # Нормализуем признаки
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
     
-    median_time = y_train.median()
-    y_pred = np.full(len(y_test), median_time)
+    # Используем Random Forest для регрессии
+    print(f"\nОбучение Random Forest...")
+    model = RandomForestRegressor(
+        n_estimators=100,
+        max_depth=15,
+        min_samples_split=5,
+        min_samples_leaf=2,
+        random_state=42
+    )
+    model.fit(X_train_scaled, y_train)
+    y_pred = model.predict(X_test_scaled)
     
-    print(f"Медиана времени обработки: {median_time:.2f} сек")
-    print(f"Все предсказания = {median_time:.2f} сек (baseline)")
+    # Важность признаков
+    feature_importance = pd.DataFrame({
+        'feature': X_enhanced.columns,
+        'importance': model.feature_importances_
+    }).sort_values('importance', ascending=False)
+    print(f"\nТоп-10 важных признаков:")
+    for _, row in feature_importance.head(10).iterrows():
+        print(f"  {row['feature']}: {row['importance']:.3f}")
 
     r2 = r2_score(y_test, y_pred)
     mae = mean_absolute_error(y_test, y_pred)
@@ -226,12 +241,19 @@ def run_regression(X: pd.DataFrame, y: pd.Series) -> Dict[str, float]:
     plt.savefig(PLOTS_DIR / "regression_errors_hist.png")
     plt.close()
 
-    # Сохраняем baseline-модель (просто медиану)
+    # Сохраняем модель вместе с порядком фичей, scaler и статистикой пользователей
     payload = {
-        "median_time": float(median_time),
-        "model_type": "baseline_median",
-        "note": "Корреляции с признаками отсутствуют, используется медиана",
+        "model": model,
+        "scaler": scaler,
+        "feature_names": list(X_enhanced.columns),
+        "model_type": "random_forest",
     }
+    # Сохраняем глобальные статистики для новых пользователей
+    if 'user_avg_time' in X_enhanced.columns:
+        payload["global_user_avg"] = float(y_clean.mean())
+        payload["global_user_median"] = float(y_clean.median())
+        payload["global_user_std"] = float(y_clean.std())
+    
     joblib.dump(payload, MODELS_DIR / "ocr_time_regression.joblib")
 
     return {"r2": float(r2), "mae": float(mae), "mse": float(mse)}
@@ -410,6 +432,36 @@ def run_all(csv_path: Optional[str] = None, target_col: Optional[str] = None) ->
 
     print(f"Форма X_reg (для регрессии): {X_reg.shape}")
     print(f"Форма X_full (для классификации/кластеризации): {X_full.shape}")
+
+    # Добавляем историю пользователя (если есть user_id в данных)
+    if 'user_id' in X_full.columns:
+        print(f"\n📊 Добавляем признаки истории пользователя...")
+        user_stats = X_full.groupby('user_id')['ocr_time'].agg(['mean', 'median', 'std']).reset_index()
+        user_stats.columns = ['user_id', 'user_avg_time', 'user_median_time', 'user_std_time']
+        X_full_merged = X_full.merge(user_stats, on='user_id', how='left')
+        # Для новых пользователей заполняем глобальным средним
+        X_full_merged['user_avg_time'].fillna(y_reg.mean(), inplace=True)
+        X_full_merged['user_median_time'].fillna(y_reg.median(), inplace=True)
+        X_full_merged['user_std_time'].fillna(y_reg.std(), inplace=True)
+        X_full = X_full_merged
+        
+        # Обновляем X_reg с новыми признаками
+        user_features = ['user_avg_time', 'user_median_time', 'user_std_time']
+        for col in user_features:
+            if col in X_full.columns:
+                X_reg[col] = X_full[col]
+    
+    # Добавляем текстовые признаки (если есть в данных)
+    text_features = ['text_length', 'line_count', 'avg_word_length']
+    for col in text_features:
+        if col in X_full.columns:
+            X_reg[col] = X_full[col]
+            print(f"   ✓ Добавлен признак: {col}")
+    
+    # Вычисляем производные признаки плотности текста
+    if 'text_length' in X_reg.columns and 'megapixels' in X_reg.columns:
+        X_reg['chars_per_megapixel'] = X_reg['text_length'] / (X_reg['megapixels'] + 0.001)
+        print(f"   ✓ Добавлен признак: chars_per_megapixel")
 
     metrics_reg = run_regression(X_reg, y_reg)
 

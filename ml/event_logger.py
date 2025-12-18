@@ -27,6 +27,9 @@ class EventRecord:
     brightness: float
     contrast: float
     word_count: int
+    text_length: int  # количество символов в тексте
+    line_count: int   # количество строк
+    avg_word_length: float  # средняя длина слова
     predicted_time: float
     ocr_time: float
     total_time: float
@@ -65,6 +68,13 @@ def log_event(
     except Exception:
         doc_label = "unknown"
 
+    # Вычисляем текстовые признаки
+    text_clean = text or ""
+    text_length = len(text_clean)
+    line_count = text_clean.count('\n') + 1 if text_clean else 0
+    words = text_clean.split()
+    avg_word_length = sum(len(w) for w in words) / len(words) if words else 0.0
+
     rec = EventRecord(
         ts=time.time(),
         user_id=int(user_id),
@@ -77,6 +87,9 @@ def log_event(
         brightness=float(feats.brightness),
         contrast=float(feats.contrast),
         word_count=int(feats.word_count),
+        text_length=int(text_length),
+        line_count=int(line_count),
+        avg_word_length=float(avg_word_length),
         predicted_time=float(predicted),
         ocr_time=float(t_ocr),
         total_time=float(t_total),
