@@ -42,25 +42,11 @@ def load_csv_dataset(path: Path, target_col: str) -> Tuple[pd.DataFrame, pd.Seri
     target_col: имя целевой колонки
     """
 
-    # Читаем CSV с обработкой ошибок (на случай смешанных форматов)
-    try:
-        df = pd.read_csv(path)
-    except pd.errors.ParserError:
-        # Если есть проблемы с парсингом, пробуем с on_bad_lines='skip'
-        print(f"⚠️  Предупреждение: CSV содержит строки с разным количеством полей. Пропускаем проблемные строки.")
-        df = pd.read_csv(path, on_bad_lines='skip')
-    
+    df = pd.read_csv(path)
     if target_col not in df.columns:
         raise ValueError(f"Столбец '{target_col}' не найден в CSV {path}")
     y = df[target_col]
     X = df.drop(columns=[target_col])
-
-    # Добавляем отсутствующие колонки (для обратной совместимости)
-    missing_cols = ['text_length', 'line_count', 'avg_word_length']
-    for col in missing_cols:
-        if col not in X.columns:
-            X[col] = 0.0
-            print(f"   ℹ️  Добавлена отсутствующая колонка: {col} (заполнена нулями)")
 
     # Простейший препроцессинг: выбрасываем нечисловые колонки
     X = X.select_dtypes(include=[np.number]).copy()
@@ -450,7 +436,11 @@ def run_all(csv_path: Optional[str] = None, target_col: Optional[str] = None) ->
     # Добавляем историю пользователя (если есть user_id в данных)
     if 'user_id' in X_full.columns:
         print(f"\n📊 Добавляем признаки истории пользователя...")
-        user_stats = X_full.groupby('user_id')['ocr_time'].agg(['mean', 'median', 'std']).reset_index()
+        # Создаём временный DataFrame для группировки
+        temp_df = X_full[['user_id']].copy()
+        temp_df['ocr_time'] = y_reg.values  # Добавляем целевую переменную
+        
+        user_stats = temp_df.groupby('user_id')['ocr_time'].agg(['mean', 'median', 'std']).reset_index()
         user_stats.columns = ['user_id', 'user_avg_time', 'user_median_time', 'user_std_time']
         X_full_merged = X_full.merge(user_stats, on='user_id', how='left')
         # Для новых пользователей заполняем глобальным средним
@@ -464,6 +454,8 @@ def run_all(csv_path: Optional[str] = None, target_col: Optional[str] = None) ->
         for col in user_features:
             if col in X_full.columns:
                 X_reg[col] = X_full[col]
+    else:
+        print(f"\n⚠️  Пропуск истории пользователя: колонка 'user_id' не найдена")
     
     # Добавляем текстовые признаки (если есть в данных)
     text_features = ['text_length', 'line_count', 'avg_word_length']
@@ -472,7 +464,7 @@ def run_all(csv_path: Optional[str] = None, target_col: Optional[str] = None) ->
             X_reg[col] = X_full[col]
             print(f"   ✓ Добавлен признак: {col}")
     
-    # Вычисляем производные признаки плотности текста
+    # Вычисляем производные признаки плотности текста (если достаточно данных)
     if 'text_length' in X_reg.columns and 'megapixels' in X_reg.columns:
         X_reg['chars_per_megapixel'] = X_reg['text_length'] / (X_reg['megapixels'] + 0.001)
         print(f"   ✓ Добавлен признак: chars_per_megapixel")
