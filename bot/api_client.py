@@ -428,13 +428,15 @@ def api_get_text_models(tg_id: int, username: str) -> Dict[str, dict]:
                             if not name:
                                 continue
                             
-                            # Фильтруем только текстовые модели (исключаем мультимодальные)
+                            # Фильтруем модели, которые поддерживают генерацию текста
                             category = model.get("category", "").lower()
                             supported = model.get("supported_generation_methods", [])
                             
-                            # Берём только модели с категорией "text"
-                            # Не используем generateContent, т.к. его поддерживают и мультимодальные модели
-                            if category == "text" or (category == "" and "generateText" in supported):
+                            # Берём модели, которые поддерживают generateContent (включая мультимодальные)
+                            # или явно помечены как текстовые
+                            if (category in ["text", "multimodal"] or 
+                                "generateContent" in supported or 
+                                "generateText" in supported):
                                 is_available = model.get("is_available", True)
                                 result[name] = {
                                     "display_name": model.get("display_name", name),
