@@ -8,15 +8,10 @@ pipeline {
         KEEP_BUILDS = "10"
     }
 
-    parameters {
-        booleanParam(name: 'RUN_ML_IMPORT', defaultValue: true, description: 'Запустить ML batch import (долго!)')
-        booleanParam(name: 'RUN_ML_TRAIN',  defaultValue: true, description: 'Запустить ML train models (долго!)')
-    }
-
     options {
         timestamps()
         buildDiscarder(logRotator(numToKeepStr: '20'))
-        timeout(time: 30, unit: 'MINUTES')  // Общий таймаут на весь pipeline
+        timeout(time: 30, unit: 'MINUTES')
     }
 
     stages {
@@ -95,44 +90,19 @@ pipeline {
             }
         }
 
-        stage('ML train models') {
-            when { 
-                expression { params.RUN_ML_TRAIN == true }
-            }
-            options { timeout(time: 60, unit: 'MINUTES') }
-            steps {
-                sh '''
-                set -e
-                if docker run --rm -v ml_output:/app/ml_output -w /app \
-                     ${IMAGE_NAME}:${BUILD_NUMBER} \
-                     test -f ml_output/events.csv ; then
-                  echo "Найден ml_output/events.csv, запускаю обучение моделей..."
-                  docker run --rm \
-                    -v ml_output:/app/ml_output \
-                    -w /app \
-                    ${IMAGE_NAME}:${BUILD_NUMBER} \
-                    python -m ml.train_models --csv ml_output/events.csv --target-col ocr_time
-                else
-                  echo "⚠️ Файл ml_output/events.csv не найден, этап обучения пропущен."
-                fi
-                '''
-            }
-        }
+
 
         stage('Deploy') {
             steps {
                 withCredentials([
-                    string(credentialsId: 'tg_bot_token', variable: 'TG_BOT_TOKEN')
+                    string(credentialsId: 'tg_bot_token_dev', variable: 'TG_BOT_TOKEN_DEV')
                 ]) {
                     sh '''
                     set -e
 
-                    # Гарантируем существование тома для логов/моделей
-                    docker volume create ml_output || true
-
                     # Генерируем .env для бота из секретов Jenkins
                     cat > bot/.env <<EOF
-TELEGRAM_BOT_TOKEN=${TG_BOT_TOKEN}
+TELEGRAM_BOT_TOKEN=${TG_BOT_TOKEN_DEV}
 AI_API_BASE=${AI_API_BASE}
 AI_API_BASE_PATH=/api
 AI_API_DEBUG=1

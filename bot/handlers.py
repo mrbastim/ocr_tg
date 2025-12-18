@@ -15,37 +15,9 @@ from .keyboards import get_state, kb_main, kb_settings, token_status
 from .llm_service import run_ocr, run_llm_correction
 
 try:
-    from ml.train_models import run_all as ml_run_all
-except Exception:
-    ml_run_all = None
-
-try:
     from ml.doc_classifier import classify_document_text
 except Exception:
     classify_document_text = None
-
-try:
-    from ml.processing_regression import (
-        build_processing_summary,
-        extract_image_features,
-        predict_ocr_time,
-    )
-except Exception:
-    build_processing_summary = None
-    extract_image_features = None
-    predict_ocr_time = None
-
-try:
-    from ml.event_logger import log_event
-except Exception:
-    log_event = None
-
-try:
-    from ml.stats_plots import build_basic_plots, build_correlation_heatmap
-except Exception as e:
-    logger.error(f"Failed to import ml.stats_plots: {e}")
-    build_basic_plots = None
-    build_correlation_heatmap = None
 
 logger = logging.getLogger(__name__)
 
@@ -82,144 +54,6 @@ async def cmd_help(message: Message):
         "/ml_requirements — показать, как ML-подпроект закрывает пункты 3–6 задания\n"
         "Пришлите фото/скан или документ для OCR и коррекции",
     )
-
-
-async def cmd_ml_demo(message: Message):
-    logger.debug(f"/ml_demo from={message.from_user.id}")
-    if ml_run_all is None:
-        await message.answer("ML-модуль недоступен на этом развёртывании.")
-        return
-
-    await message.answer(
-        "Запускаю учебный ML-эксперимент на текстовом датасете "
-        "(20 Newsgroups). Это может занять некоторое время..."
-    )
-
-    loop = asyncio.get_running_loop()
-    try:
-        metrics = await loop.run_in_executor(None, ml_run_all, None, None)
-    except Exception as e:
-        logger.exception("ML demo failed")
-        await message.answer(f"Ошибка при выполнении ML-демо: {e}")
-        return
-
-    def fmt(v):
-        try:
-            return f"{float(v):.3f}"
-        except Exception:
-            return "—"
-
-    reg = metrics.get("regression", {})
-    cls = metrics.get("classification", {})
-    clu = metrics.get("clustering", {})
-
-    lines = [
-        "Учебный ML-эксперимент завершён.",
-        f"Объектов: {metrics.get('n_samples')} | Признаков: {metrics.get('n_features')}",
-        "",
-        "Регрессия (длина документа в словах):",
-        f"R² = {fmt(reg.get('r2'))}, MAE = {fmt(reg.get('mae'))}, MSE = {fmt(reg.get('mse'))}",
-        "",
-        "Классификация (тематика документа):",
-    ]
-
-    for name, m in cls.items():
-        lines.append(f"{name}: accuracy = {fmt(m.get('acc'))}, F1 = {fmt(m.get('f1'))}")
-
-    lines.extend(
-        [
-            "",
-            "Кластеризация (k-means по тем же признакам):",
-            f"k = {clu.get('k')}, silhouette = {fmt(clu.get('silhouette'))}, ARI = {fmt(clu.get('ari'))}",
-            "",
-            "Графики (распределения ошибок, сравнение моделей, кластеры) и сохранённые модели",
-            "лежат в папке ml_output/ на сервере.",
-        ]
-    )
-
-    await message.answer("\n".join(lines))
-
-
-async def cmd_ml_stats(message: Message):
-    logger.debug(f"/ml_stats from={message.from_user.id}")
-    if build_basic_plots is None:
-        await message.answer("Аналитика по логам недоступна в этом окружении.")
-        return
-
-    try:
-        plots = build_basic_plots()
-    except FileNotFoundError:
-        await message.answer("Пока нет логов обработки изображений. Отправьте несколько картинок боту.")
-        return
-    except Exception as e:
-        logger.exception("build_basic_plots failed")
-        await message.answer(f"Ошибка при построении графиков: {e}")
-        return
-
-    if not plots:
-        await message.answer("Логи найдены, но нечего визуализировать.")
-        return
-
-    from aiogram.types import FSInputFile
-
-    for path, caption in plots:
-        try:
-            photo = FSInputFile(path)
-            await message.answer_photo(photo, caption=caption)
-        except Exception as e:
-            logger.debug(f"send plot failed for {path}: {e}")
-
-
-async def cmd_ml_correlations(message: Message):
-    logger.debug(f"/ml_correlations from={message.from_user.id}")
-    if build_correlation_heatmap is None:
-        await message.answer("Анализ корреляций недоступен в этом окружении.")
-        return
-
-    try:
-        path, caption = build_correlation_heatmap()
-    except FileNotFoundError:
-        await message.answer("Пока нет логов обработки изображений. Отправьте несколько картинок боту.")
-        return
-    except Exception as e:
-        logger.exception("build_correlation_heatmap failed")
-        await message.answer(f"Ошибка при построении матрицы корреляций: {e}")
-        return
-
-    from aiogram.types import FSInputFile
-
-    try:
-        photo = FSInputFile(path)
-        await message.answer_photo(photo, caption=caption)
-    except Exception as e:
-        logger.debug(f"send correlation plot failed: {e}")
-
-
-async def cmd_ml_requirements(message: Message):
-    logger.debug(f"/ml_requirements from={message.from_user.id}")
-    text = (
-        "3. Визуализация результатов моделирования (графики, диаграммы, таблицы).\n"
-        "   • Команда /ml_stats строит и сохраняет графики на основе реальных логов работы бота:\n"
-        "     - time_distribution.png — распределение прогнозируемого и фактического времени обработки,\n"
-        "     - doc_types.png — распределение типов изображений (чек, форма, схема и т.п.).\n"
-        "\n"
-        "4. Документированный и структурированный код.\n"
-        "   • Код ML-подпроекта разнесён по модулям: ml/train_models.py, ml/doc_classifier.py, ml/processing_regression.py, ml/event_logger.py, ml/stats_plots.py.\n"
-        "   • В файлах используются docstring-и и комментарии, описывающие назначение функций и шаги обработки.\n"
-        "\n"
-        "5. Оценка качества моделей и сравнительный анализ.\n"
-        "   • /ml_demo по-прежнему показывает пример метрик на внешнем датасете,\n"
-        "     а логи позволяют дополнительно оценивать качество и скорость реальной обработки,\n"
-        "     например сравнивать прогнозируемое и фактическое время.\n"
-        "\n"
-        "6. Подробный отчёт о проделанной работе.\n"
-        "   • В качестве отчёта можно использовать связку: /ml_demo, /ml_stats + данный текст:\n"
-        "     - описание лог-датасета (реальные события обработки изображений),\n"
-        "     - перечисление использованных моделей и эвристик (регрессия времени, классификация типов документов),\n"
-        "     - анализ: сравнение прогноз/факт по времени и распределение типов документов.\n"
-        "   • При необходимости этот текст можно перенести в отчёт (PDF/Docx) и дополнить скриншотами графиков.\n"
-    )
-    await message.answer(text)
 
 
 async def cmd_strategy(message: Message):
@@ -574,30 +408,6 @@ async def on_photo(message: Message):
     st = get_state(message.from_user.id)
     lang = st["lang"]
     
-    # Оценка времени ПЕРЕД OCR (на основе размера изображения)
-    predicted_time = None
-    if extract_image_features and predict_ocr_time:
-        try:
-            # Делаем быструю оценку по размеру изображения без OCR
-            import cv2
-            img = cv2.imread(local_path)
-            if img is not None:
-                from ml.processing_regression import ImageFeatures
-                h, w = img.shape[:2]
-                brightness = float(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).mean())
-                feats = ImageFeatures(
-                    width=w,
-                    height=h,
-                    megapixels=(w * h) / 1_000_000,
-                    brightness=brightness,
-                    contrast=0.0,  # заполним после OCR
-                    word_count=0    # заполним после OCR
-                )
-                predicted_time = predict_ocr_time(feats)
-                await message.answer(f"Это займёт примерно {predicted_time:.1f} секунды обработки.")
-        except Exception as e:
-            logger.debug(f"processing time estimate failed: {e}")
-    
     await message.answer(f"Выполняю OCR (язык {lang})...")
     try:
         import time as _time
@@ -643,30 +453,6 @@ async def on_photo(message: Message):
         await send_llm_result(corrected, extra)
     else:
         await send_llm_result(corrected, extra)
-
-    # Логируем событие обработки для последующего анализа
-    if log_event:
-        try:
-            if feats is None and extract_image_features:
-                try:
-                    feats = extract_image_features(local_path, raw)
-                except Exception:
-                    pass
-            ocr_time = t1 - t0
-            total_time = t2 - t0
-            log_event(
-                image_path=local_path,
-                text=raw,
-                user_id=message.from_user.id,
-                provider=_format_llm_label(llm),
-                source="photo",
-                is_pdf=False,
-                t_ocr=ocr_time,
-                t_total=total_time,
-                predicted_time=predicted_time,
-            )
-        except Exception as e:
-            logger.debug(f"ml log_event (photo) failed: {e}")
 
 
 async def on_document(message: Message):
@@ -736,29 +522,7 @@ async def on_document(message: Message):
             await send_llm_result(corrected, extra, llm)
         else:
             await send_llm_result(corrected, extra, llm)
-        # логирование события
-        if log_event:
-            try:
-                if feats is None and extract_image_features:
-                    try:
-                        feats = extract_image_features(local_path, raw)
-                    except Exception:
-                        pass
-                ocr_time = t1 - t0
-                total_time = t2 - t0
-                log_event(
-                    image_path=local_path,
-                    text=raw,
-                    user_id=message.from_user.id,
-                    provider=_format_llm_label(llm),
-                    source="document_image",
-                    is_pdf=False,
-                    t_ocr=ocr_time,
-                    t_total=total_time,
-                    predicted_time=predicted_time,
-                )
-            except Exception as e:
-                logger.debug(f"ml log_event (document image) failed: {e}")
+
     elif mime == "application/pdf" or file_name.lower().endswith(".pdf"):
         await message.answer("Получен PDF. Пытаюсь извлечь страницы как изображения...")
         try:
@@ -869,10 +633,6 @@ def register_handlers(dp):
     dp.message.register(cmd_setkey, F.text.startswith("/setkey"))
     dp.message.register(cmd_delkey, F.text.startswith("/delkey"))
     dp.message.register(cmd_mykeys, F.text.startswith("/mykeys"))
-    dp.message.register(cmd_ml_demo, F.text.startswith("/ml_demo"))
-    dp.message.register(cmd_ml_stats, F.text.startswith("/ml_stats"))
-    dp.message.register(cmd_ml_correlations, F.text.startswith("/ml_correlations"))
-    dp.message.register(cmd_ml_requirements, F.text.startswith("/ml_requirements"))
 
     dp.callback_query.register(on_btn)
     dp.message.register(on_photo, F.photo)

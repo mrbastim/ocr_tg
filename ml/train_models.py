@@ -7,15 +7,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.linear_model import LinearRegression, LogisticRegression
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     accuracy_score,
     classification_report,
     f1_score,
-    mean_absolute_error,
-    mean_squared_error,
-    r2_score,
     silhouette_score,
 )
 from sklearn.model_selection import train_test_split
@@ -55,58 +51,6 @@ def load_csv_dataset(path: Path, target_col: str) -> Tuple[pd.DataFrame, pd.Seri
     return X, y
 
 
-def remove_outliers(
-    X: pd.DataFrame, 
-    y: pd.Series, 
-    threshold: float = 3.0, 
-    max_value: Optional[float] = 1000.0
-) -> Tuple[pd.DataFrame, pd.Series]:
-    """Удаляет выбросы в два этапа: абсолютный фильтр + z-score.
-    
-    Args:
-        X: признаки
-        y: таргет
-        threshold: порог z-score (обычно 3.0)
-        max_value: максимальное абсолютное значение; значения выше удаляются первыми
-                   (None чтобы отключить)
-    
-    Returns:
-        X и y без выбросов
-    """
-    from scipy import stats
-    
-    original_len = len(y)
-    
-    # Этап 1: абсолютный фильтр по максимальному значению
-    if max_value is not None:
-        mask_abs = y <= max_value
-        removed_abs = (~mask_abs).sum()
-        if removed_abs > 0:
-            print(f"⚠️  Этап 1 - Удалено {removed_abs} значений выше {max_value}s")
-            print(f"   Диапазон удалённых: {y[~mask_abs].min():.2f} - {y[~mask_abs].max():.2f}s")
-        X = X[mask_abs]
-        y = y[mask_abs]
-    else:
-        removed_abs = 0
-    
-    # Этап 2: z-score фильтр на оставшихся данных
-    if len(y) > 0:
-        z_scores = np.abs(stats.zscore(y))
-        mask_zscore = z_scores < threshold
-        removed_zscore = (~mask_zscore).sum()
-        if removed_zscore > 0:
-            print(f"⚠️  Этап 2 - Удалено {removed_zscore} выбросов (z-score > {threshold})")
-            print(f"   Диапазон удалённых: {y[~mask_zscore].min():.2f} - {y[~mask_zscore].max():.2f}s")
-        X = X[mask_zscore]
-        y = y[mask_zscore]
-    
-    total_removed = original_len - len(y)
-    print(f"\n📊 Итого: удалено {total_removed}/{original_len} сэмплов ({100*total_removed/original_len:.1f}%)")
-    print(f"   Осталось: {len(y)} сэмплов\n")
-    
-    return X, y
-
-
 def prepare_classification_dataset(
     X: pd.DataFrame,
     y: pd.Series,
@@ -143,122 +87,6 @@ def prepare_classification_dataset(
         return None, None, value_counts
 
     return X, y_proc, value_counts
-
-
-def run_regression(X: pd.DataFrame, y: pd.Series) -> Dict[str, float]:
-    print("=== Регрессия времени OCR ===")
-    
-    # Статистика таргета
-    print(f"\nСтатистика времени OCR (секунды):")
-    print(f"  Среднее: {y.mean():.2f}")
-    print(f"  Медиана: {y.median():.2f}")
-    print(f"  Мин: {y.min():.2f}, Макс: {y.max():.2f}")
-    print(f"  Std: {y.std():.2f}")
-    
-    # Удаляем выбросы в два этапа:
-    # 1. Абсолютный фильтр: все выше 1000 секунд удаляются
-    # 2. Z-score фильтр: статистические выбросы в оставшихся данных
-    print(f"\n{'='*50}")
-    print(f"Очистка выбросов (2 этапа)...")
-    print(f"{'='*50}")
-    X_clean, y_clean = remove_outliers(X, y, threshold=3.0, max_value=1000.0)
-    
-    # Анализ корреляции признаков с таргетом
-    print(f"\n{'='*50}")
-    print(f"Корреляция признаков с ocr_time:")
-    print(f"{'='*50}")
-    corr_data = X_clean.copy()
-    corr_data['ocr_time'] = y_clean
-    correlations = corr_data.corr()['ocr_time'].drop('ocr_time').sort_values(ascending=False)
-    for feat, corr_val in correlations.items():
-        symbol = "✓" if abs(corr_val) > 0.3 else "✗" if abs(corr_val) > 0.1 else "—"
-        print(f"  {symbol} {feat:20s}: {corr_val:6.3f}")
-    print(f"\nИнтерпретация: |r| > 0.3 = сильная, > 0.1 = слабая, < 0.1 = почти нет\n")
-    
-    # Добавляем дополнительные признаки для лучшего предсказания
-    X_enhanced = X_clean.copy()
-    if 'megapixels' in X_clean.columns:
-        X_enhanced['megapixels_squared'] = X_clean['megapixels'] ** 2
-        X_enhanced['log_megapixels'] = np.log1p(X_clean['megapixels'])
-    if 'width' in X_clean.columns and 'height' in X_clean.columns:
-        X_enhanced['aspect_ratio'] = X_clean['width'] / (X_clean['height'] + 1)
-        X_enhanced['total_pixels'] = X_clean['width'] * X_clean['height']
-        X_enhanced['log_pixels'] = np.log1p(X_enhanced['total_pixels'])
-    
-    X_train, X_test, y_train, y_test = train_test_split(
-        X_enhanced, y_clean, test_size=0.2, random_state=42
-    )
-
-    # Нормализуем признаки
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
-    
-    # Используем Random Forest для регрессии
-    print(f"\nОбучение Random Forest...")
-    model = RandomForestRegressor(
-        n_estimators=100,
-        max_depth=15,
-        min_samples_split=5,
-        min_samples_leaf=2,
-        random_state=42
-    )
-    model.fit(X_train_scaled, y_train)
-    y_pred = model.predict(X_test_scaled)
-    
-    # Важность признаков
-    feature_importance = pd.DataFrame({
-        'feature': X_enhanced.columns,
-        'importance': model.feature_importances_
-    }).sort_values('importance', ascending=False)
-    print(f"\nТоп-10 важных признаков:")
-    for _, row in feature_importance.head(10).iterrows():
-        print(f"  {row['feature']}: {row['importance']:.3f}")
-
-    r2 = r2_score(y_test, y_pred)
-    mae = mean_absolute_error(y_test, y_pred)
-    mse = mean_squared_error(y_test, y_pred)
-
-    print(f"R^2: {r2:.3f}")
-    print(f"MAE: {mae:.3f}")
-    print(f"MSE: {mse:.3f}")
-
-    # Графики: предсказание vs фактические, распределение ошибок
-    plt.figure(figsize=(6, 5))
-    plt.scatter(y_test, y_pred, alpha=0.6)
-    plt.xlabel("Фактическое значение")
-    plt.ylabel("Предсказание")
-    plt.title("Линейная регрессия: y_true vs y_pred")
-    plt.tight_layout()
-    plt.savefig(PLOTS_DIR / "regression_scatter.png")
-    plt.close()
-
-    errors = y_test - y_pred
-    plt.figure(figsize=(6, 5))
-    plt.hist(errors, bins=30, alpha=0.7)
-    plt.xlabel("Ошибка (y_true - y_pred)")
-    plt.ylabel("Частота")
-    plt.title("Распределение ошибок регрессии")
-    plt.tight_layout()
-    plt.savefig(PLOTS_DIR / "regression_errors_hist.png")
-    plt.close()
-
-    # Сохраняем модель вместе с порядком фичей, scaler и статистикой пользователей
-    payload = {
-        "model": model,
-        "scaler": scaler,
-        "feature_names": list(X_enhanced.columns),
-        "model_type": "random_forest",
-    }
-    # Сохраняем глобальные статистики для новых пользователей
-    if 'user_avg_time' in X_enhanced.columns:
-        payload["global_user_avg"] = float(y_clean.mean())
-        payload["global_user_median"] = float(y_clean.median())
-        payload["global_user_std"] = float(y_clean.std())
-    
-    joblib.dump(payload, MODELS_DIR / "ocr_time_regression.joblib")
-
-    return {"r2": float(r2), "mae": float(mae), "mse": float(mse)}
 
 
 def run_classification(X: pd.DataFrame, y: pd.Series) -> Dict[str, Dict[str, float]]:
@@ -432,46 +260,7 @@ def run_all(csv_path: Optional[str] = None, target_col: Optional[str] = None) ->
     else:
         X_reg = X_full
 
-    print(f"Форма X_reg (для регрессии): {X_reg.shape}")
     print(f"Форма X_full (для классификации/кластеризации): {X_full.shape}")
-
-    # Добавляем историю пользователя (если есть user_id в данных)
-    if 'user_id' in X_full.columns:
-        print(f"\n📊 Добавляем признаки истории пользователя...")
-        # Создаём временный DataFrame для группировки
-        temp_df = X_full[['user_id']].copy()
-        temp_df['ocr_time'] = y_reg.values  # Добавляем целевую переменную
-        
-        user_stats = temp_df.groupby('user_id')['ocr_time'].agg(['mean', 'median', 'std']).reset_index()
-        user_stats.columns = ['user_id', 'user_avg_time', 'user_median_time', 'user_std_time']
-        X_full_merged = X_full.merge(user_stats, on='user_id', how='left')
-        # Для новых пользователей заполняем глобальным средним
-        X_full_merged['user_avg_time'].fillna(y_reg.mean(), inplace=True)
-        X_full_merged['user_median_time'].fillna(y_reg.median(), inplace=True)
-        X_full_merged['user_std_time'].fillna(y_reg.std(), inplace=True)
-        X_full = X_full_merged
-        
-        # Обновляем X_reg с новыми признаками
-        user_features = ['user_avg_time', 'user_median_time', 'user_std_time']
-        for col in user_features:
-            if col in X_full.columns:
-                X_reg[col] = X_full[col]
-    else:
-        print(f"\n⚠️  Пропуск истории пользователя: колонка 'user_id' не найдена")
-    
-    # Добавляем текстовые признаки (если есть в данных)
-    text_features = ['text_length', 'line_count', 'avg_word_length']
-    for col in text_features:
-        if col in X_full.columns:
-            X_reg[col] = X_full[col]
-            print(f"   ✓ Добавлен признак: {col}")
-    
-    # Вычисляем производные признаки плотности текста (если достаточно данных)
-    if 'text_length' in X_reg.columns and 'megapixels' in X_reg.columns:
-        X_reg['chars_per_megapixel'] = X_reg['text_length'] / (X_reg['megapixels'] + 0.001)
-        print(f"   ✓ Добавлен признак: chars_per_megapixel")
-
-    metrics_reg = run_regression(X_reg, y_reg)
 
     X_cls, y_cls, class_counts = prepare_classification_dataset(X_full, y_reg)
     if X_cls is None or y_cls is None:
@@ -492,7 +281,6 @@ def run_all(csv_path: Optional[str] = None, target_col: Optional[str] = None) ->
     return {
         "n_samples": int(X_full.shape[0]),
         "n_features": int(X_full.shape[1]),
-        "regression": metrics_reg,
         "classification": metrics_cls,
         "clustering": metrics_clu,
     }
