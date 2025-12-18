@@ -187,8 +187,7 @@ def run_regression(X: pd.DataFrame, y: pd.Series) -> Dict[str, float]:
         max_depth=15,
         min_samples_split=5,
         min_samples_leaf=2,
-        random_state=42,
-        n_jobs=-1
+        random_state=42
     )
     model.fit(X_train_scaled, y_train)
     y_pred = model.predict(X_test_scaled)
