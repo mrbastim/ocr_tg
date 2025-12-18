@@ -187,31 +187,16 @@ def run_regression(X: pd.DataFrame, y: pd.Series) -> Dict[str, float]:
         X_enhanced, y_clean, test_size=0.2, random_state=42
     )
 
-    # Нормализуем признаки
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
+    # Поскольку корреляции с признаками практически нет,
+    # используем простое baseline-решение: медиану
+    print(f"\n⚠️  ВАЖНО: Корреляция признаков с ocr_time очень слабая.")
+    print(f"   Используем медиану как baseline-предсказание.\n")
     
-    # Используем Random Forest вместо линейной регрессии
-    print(f"\nОбучение Random Forest...")
-    model = RandomForestRegressor(
-        n_estimators=100,
-        max_depth=15,
-        min_samples_split=5,
-        min_samples_leaf=2,
-        random_state=42
-    )
-    model.fit(X_train_scaled, y_train)
-    y_pred = model.predict(X_test_scaled)
+    median_time = y_train.median()
+    y_pred = np.full(len(y_test), median_time)
     
-    # Важность признаков
-    feature_importance = pd.DataFrame({
-        'feature': X_enhanced.columns,
-        'importance': model.feature_importances_
-    }).sort_values('importance', ascending=False)
-    print(f"\nТоп-5 важных признаков:")
-    for _, row in feature_importance.head(5).iterrows():
-        print(f"  {row['feature']}: {row['importance']:.3f}")
+    print(f"Медиана времени обработки: {median_time:.2f} сек")
+    print(f"Все предсказания = {median_time:.2f} сек (baseline)")
 
     r2 = r2_score(y_test, y_pred)
     mae = mean_absolute_error(y_test, y_pred)
@@ -241,11 +226,11 @@ def run_regression(X: pd.DataFrame, y: pd.Series) -> Dict[str, float]:
     plt.savefig(PLOTS_DIR / "regression_errors_hist.png")
     plt.close()
 
-    # Сохраняем модель вместе с порядком фичей и scaler
+    # Сохраняем baseline-модель (просто медиану)
     payload = {
-        "model": model,
-        "scaler": scaler,
-        "feature_names": list(X_enhanced.columns),
+        "median_time": float(median_time),
+        "model_type": "baseline_median",
+        "note": "Корреляции с признаками отсутствуют, используется медиана",
     }
     joblib.dump(payload, MODELS_DIR / "ocr_time_regression.joblib")
 

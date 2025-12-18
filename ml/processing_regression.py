@@ -100,63 +100,55 @@ def extract_image_features(image_path: str, text: str) -> ImageFeatures:
 def predict_ocr_time(features: ImageFeatures) -> float:
     """Оценка времени OCR в секундах.
 
-    1. Если есть обученная модель (ocr_time_regression.joblib), используем её.
-    2. Иначе используем простую эвристику по размеру, контрасту и числу слов.
+    1. Если есть обученная модель (ocr_time_regression.joblib), используем медиану.
+    2. Иначе используем базовое значение 3.0 секунды.
     """
 
     model_payload = _load_trained_model()
     if model_payload is not None:
-        model = model_payload["model"]
-        scaler = model_payload.get("scaler")  # может быть None для старых моделей
-        feature_names = list(model_payload.get("feature_names", []))
+        # Новый формат: baseline median
+        if "median_time" in model_payload:
+            return float(model_payload["median_time"])
         
-        # Базовые признаки
-        feat_map: Dict[str, float] = {
-            "width": float(features.width),
-            "height": float(features.height),
-            "megapixels": float(features.megapixels),
-            "brightness": float(features.brightness),
-            "contrast": float(features.contrast),
-            "word_count": float(features.word_count),
-        }
-        
-        # Добавляем производные признаки (как в train_models.py)
-        if "megapixels" in feat_map:
-            feat_map["megapixels_squared"] = feat_map["megapixels"] ** 2
-            feat_map["log_megapixels"] = np.log1p(feat_map["megapixels"])
-        if "width" in feat_map and "height" in feat_map:
-            feat_map["aspect_ratio"] = feat_map["width"] / (feat_map["height"] + 1)
-            feat_map["total_pixels"] = feat_map["width"] * feat_map["height"]
-            feat_map["log_pixels"] = np.log1p(feat_map["total_pixels"])
-        
-        if feature_names:
-            # Передаём именованные признаки в правильном порядке
-            x_vec = pd.DataFrame([
-                {name: feat_map.get(name, 0.0) for name in feature_names}
-            ])
-            try:
-                # Применяем scaler если он есть
-                if scaler is not None:
-                    x_vec = scaler.transform(x_vec)
-                
-                pred = model.predict(x_vec)[0]
-                t = float(pred)
-                if np.isfinite(t):
-                    # Ограничиваем разумный диапазон
-                    return float(max(0.1, min(t, 120.0)))
-            except Exception:
-                # Падаем в эвристику ниже
-                pass
+        # Старый формат с моделью (для обратной совместимости)
+        if "model" in model_payload:
+            model = model_payload["model"]
+            scaler = model_payload.get("scaler")
+            feature_names = list(model_payload.get("feature_names", []))
+            
+            feat_map: Dict[str, float] = {
+                "width": float(features.width),
+                "height": float(features.height),
+                "megapixels": float(features.megapixels),
+                "brightness": float(features.brightness),
+                "contrast": float(features.contrast),
+                "word_count": float(features.word_count),
+            }
+            
+            if "megapixels" in feat_map:
+                feat_map["megapixels_squared"] = feat_map["megapixels"] ** 2
+                feat_map["log_megapixels"] = np.log1p(feat_map["megapixels"])
+            if "width" in feat_map and "height" in feat_map:
+                feat_map["aspect_ratio"] = feat_map["width"] / (feat_map["height"] + 1)
+                feat_map["total_pixels"] = feat_map["width"] * feat_map["height"]
+                feat_map["log_pixels"] = np.log1p(feat_map["total_pixels"])
+            
+            if feature_names:
+                x_vec = pd.DataFrame([
+                    {name: feat_map.get(name, 0.0) for name in feature_names}
+                ])
+                try:
+                    if scaler is not None:
+                        x_vec = scaler.transform(x_vec)
+                    pred = model.predict(x_vec)[0]
+                    t = float(pred)
+                    if np.isfinite(t):
+                        return float(max(0.1, min(t, 120.0)))
+                except Exception:
+                    pass
 
-    # Базовая эвристика, если модели ещё нет
-    base = 1.0
-    mp_term = 0.8 * features.megapixels
-    wc_term = 0.002 * features.word_count
-    contrast_term = 0.8 * (1.0 - features.contrast)
-
-    t = base + mp_term + wc_term + contrast_term
-    t = max(0.5, min(t, 20.0))
-    return float(t)
+    # Fallback: базовое время если модели нет
+    return 3.0
 
 
 def build_processing_summary(image_path: str | None, text: str) -> str:
