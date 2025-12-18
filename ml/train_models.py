@@ -42,7 +42,9 @@ def load_csv_dataset(path: Path, target_col: str) -> Tuple[pd.DataFrame, pd.Seri
     target_col: имя целевой колонки
     """
 
-    df = pd.read_csv(path)
+    # Пробуем прочитать CSV, пропуская проблемные строки
+    df = pd.read_csv(path, on_bad_lines='skip')
+    
     if target_col not in df.columns:
         raise ValueError(f"Столбец '{target_col}' не найден в CSV {path}")
     y = df[target_col]
