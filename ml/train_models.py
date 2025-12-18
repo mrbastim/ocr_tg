@@ -42,11 +42,25 @@ def load_csv_dataset(path: Path, target_col: str) -> Tuple[pd.DataFrame, pd.Seri
     target_col: имя целевой колонки
     """
 
-    df = pd.read_csv(path)
+    # Читаем CSV с обработкой ошибок (на случай смешанных форматов)
+    try:
+        df = pd.read_csv(path)
+    except pd.errors.ParserError:
+        # Если есть проблемы с парсингом, пробуем с on_bad_lines='skip'
+        print(f"⚠️  Предупреждение: CSV содержит строки с разным количеством полей. Пропускаем проблемные строки.")
+        df = pd.read_csv(path, on_bad_lines='skip')
+    
     if target_col not in df.columns:
         raise ValueError(f"Столбец '{target_col}' не найден в CSV {path}")
     y = df[target_col]
     X = df.drop(columns=[target_col])
+
+    # Добавляем отсутствующие колонки (для обратной совместимости)
+    missing_cols = ['text_length', 'line_count', 'avg_word_length']
+    for col in missing_cols:
+        if col not in X.columns:
+            X[col] = 0.0
+            print(f"   ℹ️  Добавлена отсутствующая колонка: {col} (заполнена нулями)")
 
     # Простейший препроцессинг: выбрасываем нечисловые колонки
     X = X.select_dtypes(include=[np.number]).copy()
