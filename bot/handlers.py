@@ -42,7 +42,8 @@ except Exception:
 
 try:
     from ml.stats_plots import build_basic_plots, build_correlation_heatmap
-except Exception:
+except Exception as e:
+    logger.error(f"Failed to import ml.stats_plots: {e}")
     build_basic_plots = None
     build_correlation_heatmap = None
 

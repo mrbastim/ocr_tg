@@ -5,7 +5,7 @@ from typing import List, Tuple
 
 import matplotlib.pyplot as plt
 import pandas as pd
-import seaborn as sns
+import numpy as np
 
 from .event_logger import LOG_FILE, LOG_DIR
 
@@ -36,24 +36,31 @@ def build_correlation_heatmap() -> Tuple[Path, str]:
     # Вычисляем корреляции
     corr_matrix = df[numeric_cols].corr()
     
-    # Строим тепловую карту
-    plt.figure(figsize=(12, 10))
-    sns.heatmap(
-        corr_matrix,
-        annot=True,
-        fmt='.2f',
-        cmap='coolwarm',
-        center=0,
-        square=True,
-        cbar_kws={'label': 'Коэффициент корреляции'},
-        vmin=-1,
-        vmax=1
-    )
-    plt.title('Матрица корреляций признаков')
+    # Строим тепловую карту на matplotlib
+    fig, ax = plt.subplots(figsize=(12, 10))
+    im = ax.imshow(corr_matrix, cmap='coolwarm', aspect='auto', vmin=-1, vmax=1)
+    
+    # Добавляем цветовую шкалу
+    cbar = plt.colorbar(im, ax=ax)
+    cbar.set_label('Коэффициент корреляции', rotation=270, labelpad=20)
+    
+    # Подписи осей
+    ax.set_xticks(np.arange(len(corr_matrix.columns)))
+    ax.set_yticks(np.arange(len(corr_matrix.columns)))
+    ax.set_xticklabels(corr_matrix.columns, rotation=45, ha='right')
+    ax.set_yticklabels(corr_matrix.columns)
+    
+    # Добавляем значения корреляций в ячейки
+    for i in range(len(corr_matrix.columns)):
+        for j in range(len(corr_matrix.columns)):
+            text = ax.text(j, i, f'{corr_matrix.iloc[i, j]:.2f}',
+                          ha='center', va='center', color='black', fontsize=8)
+    
+    plt.title('Матрица корреляций признаков', fontsize=14, pad=20)
     plt.tight_layout()
     
     path = PLOTS_DIR / "correlation_heatmap.png"
-    plt.savefig(path, dpi=150)
+    plt.savefig(path, dpi=150, bbox_inches='tight')
     plt.close()
     
     return path, "Матрица корреляций всех признаков"
