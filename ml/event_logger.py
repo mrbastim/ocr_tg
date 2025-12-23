@@ -6,7 +6,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Optional
 
-from .processing_regression import ImageFeatures, extract_image_features, predict_ocr_time
+from .processing_regression import ImageFeatures, extract_image_features
 from .doc_classifier import classify_document_text
 
 
@@ -30,7 +30,6 @@ class EventRecord:
     text_length: int  # количество символов в тексте
     line_count: int   # количество строк
     avg_word_length: float  # средняя длина слова
-    predicted_time: float
     ocr_time: float
     total_time: float
     doc_type: str
@@ -46,7 +45,6 @@ def log_event(
     is_pdf: bool,
     t_ocr: float,
     t_total: float,
-    predicted_time: float | None = None,
 ) -> None:
     """Записать один факт обработки изображения в CSV-лог.
 
@@ -56,12 +54,6 @@ def log_event(
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
     feats: ImageFeatures = extract_image_features(image_path, text)
-    # Если прогноз времени уже был рассчитан до OCR и показан пользователю,
-    # логируем именно его, чтобы графики в /ml_stats отражали тот же прогноз.
-    if predicted_time is not None:
-        predicted = float(predicted_time)
-    else:
-        predicted = predict_ocr_time(feats)
 
     try:
         doc_label = classify_document_text(text)[0]
@@ -90,7 +82,6 @@ def log_event(
         text_length=int(text_length),
         line_count=int(line_count),
         avg_word_length=float(avg_word_length),
-        predicted_time=float(predicted),
         ocr_time=float(t_ocr),
         total_time=float(t_total),
         doc_type=str(doc_label),

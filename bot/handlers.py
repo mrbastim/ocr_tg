@@ -1,6 +1,7 @@
 import os
 import logging
 import html
+import asyncio
 from typing import Tuple
 
 from aiogram import F
@@ -13,6 +14,8 @@ from .api_client import API_DEBUG, API_LOG_FILE, api_login, api_register, api_ke
 from .user_keys import set_user_key, delete_user_key, get_all_user_keys
 from .keyboards import get_state, kb_main, kb_prompt_settings, kb_settings, kb_models, token_status
 from .llm_service import get_prompt_label, prompt_preview, run_ocr, run_llm_correction
+
+logger = logging.getLogger(__name__)
 
 try:
     from ml.train_models import run_all as ml_run_all
@@ -28,12 +31,10 @@ try:
     from ml.processing_regression import (
         build_processing_summary,
         extract_image_features,
-        predict_ocr_time,
     )
 except Exception:
     build_processing_summary = None
     extract_image_features = None
-    predict_ocr_time = None
 
 try:
     from ml.event_logger import log_event
@@ -41,13 +42,10 @@ except Exception:
     log_event = None
 
 try:
-    from ml.stats_plots import build_basic_plots, build_correlation_heatmap
+    from ml.stats_plots import build_basic_plots
 except Exception as e:
     logger.error(f"Failed to import ml.stats_plots: {e}")
     build_basic_plots = None
-    build_correlation_heatmap = None
-
-logger = logging.getLogger(__name__)
 
 
 async def cmd_start(message: Message):
@@ -79,7 +77,6 @@ async def cmd_help(message: Message):
         "/delkey <gigachat|gemini|yandex> — удалить личный API-ключ\n"
         "/mykeys — показать, какие ключи сохранены\n"
         "/ml_demo — учебный пример моделирования на внешнем датасете (для отчёта)\n"
-        "/ml_stats — построить графики по реальным логам обработки изображений\n"
         "/ml_requirements — показать, как ML-подпроект закрывает пункты 3–6 задания\n"
         "Пришлите фото/скан или документ для OCR и коррекции",
     )
@@ -141,84 +138,30 @@ async def cmd_ml_demo(message: Message):
     await message.answer("\n".join(lines))
 
 
-async def cmd_ml_stats(message: Message):
-    logger.debug(f"/ml_stats from={message.from_user.id}")
-    if build_basic_plots is None:
-        await message.answer("Аналитика по логам недоступна в этом окружении.")
-        return
 
-    try:
-        plots = build_basic_plots()
-    except FileNotFoundError:
-        await message.answer("Пока нет логов обработки изображений. Отправьте несколько картинок боту.")
-        return
-    except Exception as e:
-        logger.exception("build_basic_plots failed")
-        await message.answer(f"Ошибка при построении графиков: {e}")
-        return
-
-    if not plots:
-        await message.answer("Логи найдены, но нечего визуализировать.")
-        return
-
-    from aiogram.types import FSInputFile
-
-    for path, caption in plots:
-        try:
-            photo = FSInputFile(path)
-            await message.answer_photo(photo, caption=caption)
-        except Exception as e:
-            logger.debug(f"send plot failed for {path}: {e}")
-
-
-async def cmd_ml_correlations(message: Message):
-    logger.debug(f"/ml_correlations from={message.from_user.id}")
-    if build_correlation_heatmap is None:
-        await message.answer("Анализ корреляций недоступен в этом окружении.")
-        return
-
-    try:
-        path, caption = build_correlation_heatmap()
-    except FileNotFoundError:
-        await message.answer("Пока нет логов обработки изображений. Отправьте несколько картинок боту.")
-        return
-    except Exception as e:
-        logger.exception("build_correlation_heatmap failed")
-        await message.answer(f"Ошибка при построении матрицы корреляций: {e}")
-        return
-
-    from aiogram.types import FSInputFile
-
-    try:
-        photo = FSInputFile(path)
-        await message.answer_photo(photo, caption=caption)
-    except Exception as e:
-        logger.debug(f"send correlation plot failed: {e}")
 
 
 async def cmd_ml_requirements(message: Message):
     logger.debug(f"/ml_requirements from={message.from_user.id}")
     text = (
         "3. Визуализация результатов моделирования (графики, диаграммы, таблицы).\n"
-        "   • Команда /ml_stats строит и сохраняет графики на основе реальных логов работы бота:\n"
-        "     - time_distribution.png — распределение прогнозируемого и фактического времени обработки,\n"
-        "     - doc_types.png — распределение типов изображений (чек, форма, схема и т.п.).\n"
+        "   • Логи событий записываются в ml_output/events.csv для дальнейшего анализа.\n"
+        "   • Типы документов определяются классификатором: чек, скриншот, документ, форма, схема.\n"
         "\n"
         "4. Документированный и структурированный код.\n"
-        "   • Код ML-подпроекта разнесён по модулям: ml/train_models.py, ml/doc_classifier.py, ml/processing_regression.py, ml/event_logger.py, ml/stats_plots.py.\n"
+        "   • Код ML-подпроекта разнесён по модулям: ml/train_models.py, ml/doc_classifier.py, ml/event_logger.py.\n"
         "   • В файлах используются docstring-и и комментарии, описывающие назначение функций и шаги обработки.\n"
         "\n"
         "5. Оценка качества моделей и сравнительный анализ.\n"
-        "   • /ml_demo по-прежнему показывает пример метрик на внешнем датасете,\n"
-        "     а логи позволяют дополнительно оценивать качество и скорость реальной обработки,\n"
-        "     например сравнивать прогнозируемое и фактическое время.\n"
+        "   • /ml_demo показывает пример метрик на внешнем датасете (регрессия, классификация, кластеризация).\n"
+        "   • Логи позволяют дополнительно оценивать скорость обработки и распределение типов документов.\n"
         "\n"
         "6. Подробный отчёт о проделанной работе.\n"
-        "   • В качестве отчёта можно использовать связку: /ml_demo, /ml_stats + данный текст:\n"
+        "   • В качестве отчёта можно использовать: /ml_demo + данный текст:\n"
         "     - описание лог-датасета (реальные события обработки изображений),\n"
-        "     - перечисление использованных моделей и эвристик (регрессия времени, классификация типов документов),\n"
-        "     - анализ: сравнение прогноз/факт по времени и распределение типов документов.\n"
-        "   • При необходимости этот текст можно перенести в отчёт (PDF/Docx) и дополнить скриншотами графиков.\n"
+        "     - перечисление использованных моделей (классификация типов документов),\n"
+        "     - анализ: распределение типов документов по логам событий.\n"
+        "   • При необходимости этот текст можно перенести в отчёт (PDF/Docx).\n"
     )
     await message.answer(text)
 
@@ -684,31 +627,6 @@ async def on_photo(message: Message):
 
     st = get_state(message.from_user.id)
     lang = st["lang"]
-    
-    # Оценка времени ПЕРЕД OCR (на основе размера изображения)
-    predicted_time = None
-    if extract_image_features and predict_ocr_time:
-        try:
-            # Делаем быструю оценку по размеру изображения без OCR
-            import cv2
-            img = cv2.imread(local_path)
-            if img is not None:
-                from ml.processing_regression import ImageFeatures
-                h, w = img.shape[:2]
-                brightness = float(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).mean())
-                feats = ImageFeatures(
-                    width=w,
-                    height=h,
-                    megapixels=(w * h) / 1_000_000,
-                    brightness=brightness,
-                    contrast=0.0,  # заполним после OCR
-                    word_count=0    # заполним после OCR
-                )
-                predicted_time = predict_ocr_time(feats)
-                await message.answer(f"Это займёт примерно {predicted_time:.1f} секунды обработки.")
-        except Exception as e:
-            logger.debug(f"processing time estimate failed: {e}")
-    
     await message.answer(f"Выполняю OCR (язык {lang})...")
     try:
         import time as _time
@@ -736,30 +654,32 @@ async def on_photo(message: Message):
         model_name=model,
         custom_prompt=st.get("custom_prompt"),
     )
+    t2 = _time.perf_counter()
     logger.debug(f"LLM corrected len={len(corrected)}")
+
+    extra = _build_extra_info(local_path, raw)
 
     async def safe_send(text: str):
         pm = ParseMode.MARKDOWN if strategy in {"medium", "strong", "custom", "c"} else None
         try:
-            return await message.answer(html, parse_mode=ParseMode.HTML)
+            return await message.answer(text[:4000], parse_mode=pm)
         except TelegramBadRequest:
             return await message.answer(text[:4000])
 
     if st["debug"]:
         ocr_part = _html_escape(raw)[:3500]
         await message.answer(f"<b>OCR ({lang})</b>\n<pre>{ocr_part}</pre>", parse_mode=ParseMode.HTML)
-        await send_llm_result(corrected, extra)
+        await safe_send(corrected)
+        if extra:
+            await message.answer(extra)
     else:
-        await send_llm_result(corrected, extra)
+        await safe_send(corrected)
+        if extra:
+            await message.answer(extra)
 
     # Логируем событие обработки для последующего анализа
     if log_event:
         try:
-            if feats is None and extract_image_features:
-                try:
-                    feats = extract_image_features(local_path, raw)
-                except Exception:
-                    pass
             ocr_time = t1 - t0
             total_time = t2 - t0
             log_event(
@@ -771,7 +691,6 @@ async def on_photo(message: Message):
                 is_pdf=False,
                 t_ocr=ocr_time,
                 t_total=total_time,
-                predicted_time=predicted_time,
             )
         except Exception as e:
             logger.debug(f"ml log_event (photo) failed: {e}")
@@ -796,7 +715,7 @@ async def on_document(message: Message):
     async def safe_send(text: str, strategy: str):
         pm = ParseMode.MARKDOWN if strategy in {"medium", "strong", "custom", "c"} else None
         try:
-            return await message.answer(html, parse_mode=ParseMode.HTML)
+            return await message.answer(text[:4000], parse_mode=pm)
         except TelegramBadRequest:
             return await message.answer(text[:4000])
 
@@ -829,17 +748,16 @@ async def on_document(message: Message):
         if st["debug"]:
             ocr_part = _html_escape(raw)[:3500]
             await message.answer(f"<b>OCR ({lang})</b>\n<pre>{ocr_part}</pre>", parse_mode=ParseMode.HTML)
-            await send_llm_result(corrected, extra, llm)
+            await safe_send(corrected, strategy)
+            if extra:
+                await message.answer(extra)
         else:
-            await send_llm_result(corrected, extra, llm)
+            await safe_send(corrected, strategy)
+            if extra:
+                await message.answer(extra)
         # логирование события
         if log_event:
             try:
-                if feats is None and extract_image_features:
-                    try:
-                        feats = extract_image_features(local_path, raw)
-                    except Exception:
-                        pass
                 ocr_time = t1 - t0
                 total_time = t2 - t0
                 log_event(
@@ -851,7 +769,6 @@ async def on_document(message: Message):
                     is_pdf=False,
                     t_ocr=ocr_time,
                     t_total=total_time,
-                    predicted_time=predicted_time,
                 )
             except Exception as e:
                 logger.debug(f"ml log_event (document image) failed: {e}")
@@ -895,9 +812,13 @@ async def on_document(message: Message):
                 await message.answer(
                     f"<b>OCR ({lang})</b>\n<pre>{ocr_part}</pre>", parse_mode=ParseMode.HTML
                 )
-                await send_llm_result(corrected, extra, llm)
+                await safe_send(corrected, strategy)
+                if extra:
+                    await message.answer(extra)
             else:
-                await send_llm_result(corrected, extra, llm)
+                await safe_send(corrected, strategy)
+                if extra:
+                    await message.answer(extra)
             # логирование события для PDF (по первой странице)
             if log_event and first_page_path is not None:
                 try:
@@ -917,7 +838,6 @@ async def on_document(message: Message):
                         is_pdf=True,
                         t_ocr=total_time,
                         t_total=total_time,
-                        predicted_time=None,
                     )
                 except Exception as e:
                     logger.debug(f"ml log_event (pdf) failed: {e}")
@@ -981,8 +901,6 @@ def register_handlers(dp):
     dp.message.register(cmd_delkey, F.text.startswith("/delkey"))
     dp.message.register(cmd_mykeys, F.text.startswith("/mykeys"))
     dp.message.register(cmd_ml_demo, F.text.startswith("/ml_demo"))
-    dp.message.register(cmd_ml_stats, F.text.startswith("/ml_stats"))
-    dp.message.register(cmd_ml_correlations, F.text.startswith("/ml_correlations"))
     dp.message.register(cmd_ml_requirements, F.text.startswith("/ml_requirements"))
 
     dp.callback_query.register(on_btn)
