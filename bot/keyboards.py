@@ -81,9 +81,11 @@ def kb_settings(user_id: int) -> InlineKeyboardMarkup:
     # Добавляем кнопку выбора модели только если выбран Gemini
     if llm in {"gemini", "api"}:
         # Показываем текущую модель и кнопку для её изменения
+        models_cache = st.get("models_cache", {})
+        display_model = models_cache.get(current_model, {}).get("display_name", current_model)
         keyboard.append([
             InlineKeyboardButton(
-                text=f"🤖 Модель: {current_model}", 
+                text=f"🤖 Модель: {display_model}", 
                 callback_data="select_model"
             ),
         ])
