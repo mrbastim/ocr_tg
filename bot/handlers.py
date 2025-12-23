@@ -1,5 +1,6 @@
 import os
 import logging
+import html
 from typing import Tuple
 
 from aiogram import F
@@ -10,8 +11,8 @@ from aiogram.exceptions import TelegramBadRequest
 
 from .api_client import API_DEBUG, API_LOG_FILE, api_login, api_register, api_key_status, api_set_key, api_clear_key, api_get_text_models
 from .user_keys import set_user_key, delete_user_key, get_all_user_keys
-from .keyboards import get_state, kb_main, kb_settings, kb_models, token_status
-from .llm_service import run_ocr, run_llm_correction
+from .keyboards import get_state, kb_main, kb_prompt_settings, kb_settings, kb_models, token_status
+from .llm_service import get_prompt_label, prompt_preview, run_ocr, run_llm_correction
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +22,9 @@ async def cmd_start(message: Message):
     st = get_state(message.from_user.id)
     valid, mins = token_status(message.from_user.id)
     ttl = f" | Token: {'валиден' if valid else 'нет'}{f' (~{mins} мин)' if valid else ''}"
+    prompt_label = get_prompt_label(st.get("strategy"), st.get("custom_prompt"))
     header = (
-        f"<b>Стратегия:</b> C\n"
+        f"<b>Промт:</b> {prompt_label}\n"
         f"<b>LLM:</b> {st['llm']}\n"
         f"<b>Язык OCR:</b> {st['lang']}\n"
         f"<b>Debug:</b> {'on' if st['debug'] else 'off'}{ttl}"
@@ -34,7 +36,7 @@ async def cmd_help(message: Message):
     logger.debug(f"/help from={message.from_user.id}")
     await message.answer(
         "/start — начать и выбрать стратегию\n"
-        "/strategy C — выбрать стратегию\n"
+        "/strategy weak|medium|strong|custom — выбрать промт\n"
         "/lang rus|eng — выбрать язык OCR\n"
         "/llm gigachat|gemini|yandex|api — выбрать провайдера LLM (api = внешний сервер)\n"
         "/debug on|off — включить/выключить вывод OCR и LLM\n"
@@ -51,14 +53,26 @@ async def cmd_strategy(message: Message):
     logger.debug(f"/strategy from={message.from_user.id} text={message.text}")
     args = (message.text or "").split()
     if len(args) < 2:
-        await message.answer("Укажите стратегию: C")
+        await message.answer("Укажите стратегию: weak | medium | strong | custom")
         return
-    if args[1].upper() != "C":
-        await message.answer("Допустимое значение: C")
+    raw_val = args[1].lower()
+    aliases = {
+        "c": "strong",
+        "strong": "strong",
+        "medium": "medium",
+        "weak": "weak",
+        "custom": "custom",
+    }
+    strategy_val = aliases.get(raw_val)
+    if not strategy_val:
+        await message.answer("Допустимые значения: weak | medium | strong | custom (alias: C)")
         return
     st = get_state(message.from_user.id)
-    st["strategy"] = "C"
-    await message.answer("Стратегия установлена: C", reply_markup=kb_main(message.from_user.id))
+    st["strategy"] = strategy_val
+    prompt_label = get_prompt_label(strategy_val, st.get("custom_prompt"))
+    await message.answer(
+        f"Стратегия промта установлена: {prompt_label}", reply_markup=kb_main(message.from_user.id)
+    )
 
 
 async def cmd_lang(message: Message):
@@ -224,10 +238,11 @@ async def on_btn(query: CallbackQuery):
     edited = False
 
     if data.startswith("set_strategy:"):
-        st["strategy"] = "C"
+        st["strategy"] = "strong"
         edited = True
     elif data == "open_settings":
         st["settings_open"] = True
+        st["prompt_settings_open"] = False
         # При открытии настроек проверяем статус ключа Gemini напрямую у сервера
         uid = query.from_user.id
         uname = query.from_user.username or str(uid)
@@ -242,6 +257,7 @@ async def on_btn(query: CallbackQuery):
         edited = True
     elif data == "close_settings":
         st["settings_open"] = False
+        st["prompt_settings_open"] = False
         edited = True
     elif data.startswith("set_llm:"):
         _, val = data.split(":", 1)
@@ -257,6 +273,58 @@ async def on_btn(query: CallbackQuery):
     elif data == "toggle_debug":
         st["debug"] = not st["debug"]
         edited = True
+    elif data == "open_prompt":
+        st["prompt_settings_open"] = True
+        st["settings_open"] = False
+        prompt_label = get_prompt_label(st.get("strategy"), st.get("custom_prompt"))
+        kb = kb_prompt_settings(query.from_user.id, st)
+        try:
+            await query.message.edit_text(
+                f"🧠 Настройка промта\nТекущий: {prompt_label}",
+                reply_markup=kb,
+                parse_mode=ParseMode.HTML,
+            )
+        except TelegramBadRequest as e:
+            logger.debug(f"edit_text skipped: {e}")
+        await query.answer()
+        return
+    elif data == "close_prompt":
+        st["prompt_settings_open"] = False
+        st["settings_open"] = True
+        edited = True
+    elif data.startswith("set_prompt:"):
+        _, val = data.split(":", 1)
+        val = val.lower()
+        st["prompt_settings_open"] = True
+        st["settings_open"] = False
+        if val in {"weak", "medium", "strong"}:
+            st["strategy"] = val
+            prompt_label = get_prompt_label(val, st.get("custom_prompt"))
+            kb = kb_prompt_settings(query.from_user.id, st)
+            try:
+                await query.message.edit_text(
+                    f"🧠 Промт выбран: {prompt_label}",
+                    reply_markup=kb,
+                    parse_mode=ParseMode.HTML,
+                )
+            except TelegramBadRequest as e:
+                logger.debug(f"edit_text skipped: {e}")
+            await query.answer()
+            return
+        if val == "custom":
+            st["await_custom_prompt"] = True
+            await query.message.answer("Отправьте свой промт одним сообщением — он заменит пресет.")
+            await query.answer("Жду ваш промт")
+            return
+    elif data == "show_prompt":
+        preview = prompt_preview(st.get("strategy", "strong"), st.get("custom_prompt"))
+        esc = html.escape(preview)
+        await query.message.answer(
+            f"<b>Текущий промт</b>\n<pre>{esc[:3500]}</pre>",
+            parse_mode=ParseMode.HTML,
+        )
+        await query.answer()
+        return
     elif data == "do_login":
         uid = query.from_user.id
         uname = query.from_user.username or str(uid)
@@ -364,13 +432,19 @@ async def on_btn(query: CallbackQuery):
     if edited:
         valid, mins = token_status(query.from_user.id)
         ttl = f" | Token: {'валиден' if valid else 'нет'}{f' (~{mins} мин)' if valid else ''}"
+        prompt_label = get_prompt_label(st.get("strategy"), st.get("custom_prompt"))
         header = (
-            f"<b>Стратегия:</b> C\n"
+            f"<b>Промт:</b> {prompt_label}\n"
             f"<b>LLM:</b> {st['llm']}\n"
             f"<b>Язык OCR:</b> {st['lang']}\n"
             f"<b>Debug:</b> {'on' if st['debug'] else 'off'}{ttl}"
         )
-        kb = kb_settings(query.from_user.id) if st.get("settings_open") else kb_main(query.from_user.id)
+        if st.get("prompt_settings_open"):
+            kb = kb_prompt_settings(query.from_user.id, st)
+        elif st.get("settings_open"):
+            kb = kb_settings(query.from_user.id)
+        else:
+            kb = kb_main(query.from_user.id)
         try:
             await query.message.edit_text(header, reply_markup=kb, parse_mode=ParseMode.HTML)
         except TelegramBadRequest as e:
@@ -398,15 +472,24 @@ async def on_photo(message: Message):
         await message.answer(f"Ошибка OCR: {e}")
         return
 
-    strategy = st["strategy"]
+    strategy = (st.get("strategy") or "strong").lower()
     llm = st["llm"]
     model = st.get("model", "gemini-2.5-flash")
-    await message.answer(f"Коррекция LLM (стратегия {strategy}, {llm})...")
-    corrected = run_llm_correction(raw, strategy=strategy, llm=llm, user_id=message.from_user.id, username=message.from_user.username or str(message.from_user.id), model_name=model)
+    prompt_label = get_prompt_label(strategy, st.get("custom_prompt"))
+    await message.answer(f"Коррекция LLM (промт {prompt_label}, {llm})...")
+    corrected = run_llm_correction(
+        raw,
+        strategy=strategy,
+        llm=llm,
+        user_id=message.from_user.id,
+        username=message.from_user.username or str(message.from_user.id),
+        model_name=model,
+        custom_prompt=st.get("custom_prompt"),
+    )
     logger.debug(f"LLM corrected len={len(corrected)}")
 
     async def safe_send(text: str):
-        pm = ParseMode.MARKDOWN if strategy in {"B", "C"} else None
+        pm = ParseMode.MARKDOWN if strategy in {"medium", "strong", "custom", "c"} else None
         try:
             return await message.answer(text[:4000], parse_mode=pm)
         except TelegramBadRequest:
@@ -440,7 +523,7 @@ async def on_document(message: Message):
     lang = st["lang"]
 
     async def safe_send(text: str, strategy: str):
-        pm = ParseMode.MARKDOWN if strategy in {"B", "C"} else None
+        pm = ParseMode.MARKDOWN if strategy in {"medium", "strong", "custom", "c"} else None
         try:
             return await message.answer(text[:4000], parse_mode=pm)
         except TelegramBadRequest:
@@ -453,7 +536,7 @@ async def on_document(message: Message):
         except Exception as e:
             await message.answer(f"Ошибка OCR: {e}")
             return
-        strategy = st["strategy"]
+        strategy = (st.get("strategy") or "strong").lower()
         llm = st["llm"]
         model = st.get("model", "gemini-2.5-flash")
         corrected = run_llm_correction(
@@ -463,6 +546,7 @@ async def on_document(message: Message):
             user_id=message.from_user.id,
             username=message.from_user.username or str(message.from_user.id),
             model_name=model,
+            custom_prompt=st.get("custom_prompt"),
         )
         if st["debug"]:
             def html_escape(s: str) -> str:
@@ -493,7 +577,7 @@ async def on_document(message: Message):
                 except Exception as e:
                     all_text.append(f"[Ошибка OCR стр.{i + 1}] {e}")
             combined = "\n\n".join(all_text)
-            strategy = st["strategy"]
+            strategy = (st.get("strategy") or "strong").lower()
             llm = st["llm"]
             model = st.get("model", "gemini-2.5-flash")
             corrected = run_llm_correction(
@@ -503,6 +587,7 @@ async def on_document(message: Message):
                 user_id=message.from_user.id,
                 username=message.from_user.username or str(message.from_user.id),
                 model_name=model,
+                custom_prompt=st.get("custom_prompt"),
             )
             if st["debug"]:
                 def html_escape(s: str) -> str:
@@ -526,6 +611,18 @@ async def on_document(message: Message):
 async def on_text(message: Message):
     logger.debug(f"on_text from={message.from_user.id} len={len(message.text or '')}")
     st = get_state(message.from_user.id)
+    if st.pop("await_custom_prompt", False):
+        custom = (message.text or "").strip()
+        if not custom:
+            await message.answer("Промт пустой. Отправьте непустой текст.")
+            return
+        st["custom_prompt"] = custom
+        st["strategy"] = "custom"
+        st["prompt_settings_open"] = True
+        kb = kb_prompt_settings(message.from_user.id, st)
+        await message.answer("Свой промт сохранён и активирован.", reply_markup=kb)
+        return
+
     provider = st.pop("await_key_provider", None)
     if provider:
         key = (message.text or "").strip()

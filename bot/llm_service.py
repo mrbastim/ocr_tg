@@ -9,6 +9,33 @@ from .api_client import API_BASE, api_ask_text, api_key_status, api_set_key
 
 logger = logging.getLogger(__name__)
 
+PROMPT_PRESETS = {
+    "weak": {
+        "title": "Слабый",
+        "template": (
+            "Ты исправляешь распознанный текст. Поправь только самые очевидные опечатки "
+            "и ошибки OCR, не добавляй нового. Сохрани порядок предложений. Верни чистый "
+            "текст без пояснений.\n\nТекст:\n\n{text}"
+        ),
+    },
+    "medium": {
+        "title": "Средний",
+        "template": (
+            "Ты редактор текста после OCR. Исправь ошибки, убери шум, восстанови базовое "
+            "форматирование Markdown (абзацы, простые списки), но не выдумывай факты. "
+            "Верни только Markdown.\n\nТекст:\n\n{text}"
+        ),
+    },
+    "strong": {
+        "title": "Сильный",
+        "template": (
+            "Ты — редактор. Твоя задача — восстановить поврежденный текст документа. "
+            "Исправь ошибки OCR, опираясь на контекст. Восстанови логическую структуру "
+            "(заголовки, абзацы). Верни ТОЛЬКО валидный Markdown код. Текст:\n\n{text}"
+        ),
+    },
+}
+
 try:
     from gigachat import GigaChat
     from gigachat.models import Chat, Messages, MessagesRole
@@ -33,6 +60,27 @@ try:
     HTTPX_AVAILABLE = True
 except Exception:
     HTTPX_AVAILABLE = False
+
+
+def get_prompt_label(strategy: Optional[str], custom_prompt: Optional[str] = None) -> str:
+    strat = (strategy or "strong").lower()
+    if strat == "custom":
+        return "Свой промт"
+    return PROMPT_PRESETS.get(strat, PROMPT_PRESETS["strong"])["title"]
+
+
+def build_prompt(raw_text: str, strategy: str, custom_prompt: Optional[str] = None) -> str:
+    strat = (strategy or "strong").lower()
+    if strat == "custom" and custom_prompt:
+        template = custom_prompt
+    else:
+        template = PROMPT_PRESETS.get(strat, PROMPT_PRESETS["strong"])["template"]
+    return template.replace("{text}", raw_text)
+
+
+def prompt_preview(strategy: str, custom_prompt: Optional[str] = None) -> str:
+    sample = "<текст OCR>"
+    return build_prompt(sample, strategy=strategy, custom_prompt=custom_prompt)
 
 
 def gigachat_complete(prompt: str, api_key: Optional[str] = None) -> str:
@@ -151,15 +199,6 @@ def _ensure_gemini_key(tg_id: int, username: str) -> bool:
     return False
 
 
-def prompt_strategy_C(raw_text: str) -> str:
-    return (
-        "Ты — редактор. Твоя задача — восстановить поврежденный текст документа. "
-        "Исправь ошибки OCR, опираясь на контекст. Восстанови логическую структуру "
-        "(заголовки, абзацы). Верни ТОЛЬКО валидный Markdown код. Текст:\n\n"
-        f"{raw_text}"
-    )
-
-
 def run_ocr(image_path: str, lang: str = "rus") -> str:
     raw = get_raw_text(image_path, lang=lang)
     return normalize_whitespace(raw)
@@ -172,9 +211,9 @@ def run_llm_correction(
     user_id: int,
     username: str,
     model_name: Optional[str] = None,
+    custom_prompt: Optional[str] = None,
 ) -> str:
-    # Сейчас используем только стратегию C, но оставляем параметр для будущего
-    prompt = prompt_strategy_C(text)
+    prompt = build_prompt(text, strategy=strategy, custom_prompt=custom_prompt)
     llm_choice = (llm or os.getenv("LLM_PROVIDER", "gigachat")).lower()
     force_local_gemini = os.getenv("GEMINI_LOCAL", "0").lower() in {"1", "true", "yes"}
 
