@@ -335,7 +335,7 @@ async def on_btn(query: CallbackQuery):
         if model_name in models_cache or len(models_cache) == 0:
             # Если кэш пуст, позволяем всё равно установить (может быть юзер скопировал вручную)
             st["model"] = model_name
-            logger.debug(f"set_model from={uid} model={model_name}")
+            logger.debug(f"set_model from={query.from_user.id} model={model_name}")
             
             # Возвращаемся в настройки
             st["settings_open"] = True
