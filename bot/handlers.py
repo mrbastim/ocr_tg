@@ -10,7 +10,7 @@ from aiogram.exceptions import TelegramBadRequest
 
 from .api_client import API_DEBUG, API_LOG_FILE, api_login, api_register, api_key_status, api_set_key, api_clear_key, api_get_text_models
 from .user_keys import set_user_key, delete_user_key, get_all_user_keys
-from .keyboards import get_state, kb_main, kb_settings, kb_models, token_status
+from .keyboards import get_state, kb_main, kb_settings, kb_llm_settings, kb_models, token_status
 from .llm_service import run_ocr, run_llm_correction
 
 logger = logging.getLogger(__name__)
@@ -228,6 +228,7 @@ async def on_btn(query: CallbackQuery):
         edited = True
     elif data == "open_settings":
         st["settings_open"] = True
+        st["llm_menu_open"] = False
         # При открытии настроек проверяем статус ключа Gemini напрямую у сервера
         uid = query.from_user.id
         uname = query.from_user.username or str(uid)
@@ -243,6 +244,16 @@ async def on_btn(query: CallbackQuery):
     elif data == "close_settings":
         st["settings_open"] = False
         edited = True
+    elif data == "open_llm_settings":
+        # Открыть меню настроек LLM
+        st["llm_menu_open"] = True
+        await query.message.edit_text(
+            "⚙️ <b>Настройка LLM</b>",
+            reply_markup=kb_llm_settings(query.from_user.id),
+            parse_mode=ParseMode.HTML
+        )
+        await query.answer()
+        return
     elif data.startswith("set_llm:"):
         _, val = data.split(":", 1)
         llm = val.lower()
@@ -360,21 +371,37 @@ async def on_btn(query: CallbackQuery):
                 await query.message.answer(
                     f"Ключ для {provider} {'удалён' if ok_local else 'не найден'} локально."
                 )
+    elif data == "set_prompt":
+        st.setdefault("await_prompt", True)
+        await query.message.answer(
+            "Отправьте свой промт для LLM или 'reset' чтобы использовать промт по умолчанию."
+        )
 
     if edited:
-        valid, mins = token_status(query.from_user.id)
-        ttl = f" | Token: {'валиден' if valid else 'нет'}{f' (~{mins} мин)' if valid else ''}"
-        header = (
-            f"<b>Стратегия:</b> C\n"
-            f"<b>LLM:</b> {st['llm']}\n"
-            f"<b>Язык OCR:</b> {st['lang']}\n"
-            f"<b>Debug:</b> {'on' if st['debug'] else 'off'}{ttl}"
-        )
-        kb = kb_settings(query.from_user.id) if st.get("settings_open") else kb_main(query.from_user.id)
-        try:
-            await query.message.edit_text(header, reply_markup=kb, parse_mode=ParseMode.HTML)
-        except TelegramBadRequest as e:
-            logger.debug(f"edit_text skipped: {e}")
+        # Если открыто меню LLM, обновляем его; иначе обновляем основное меню
+        if st.get("llm_menu_open"):
+            try:
+                await query.message.edit_text(
+                    "⚙️ <b>Настройка LLM</b>",
+                    reply_markup=kb_llm_settings(query.from_user.id),
+                    parse_mode=ParseMode.HTML
+                )
+            except TelegramBadRequest as e:
+                logger.debug(f"edit_text skipped: {e}")
+        else:
+            valid, mins = token_status(query.from_user.id)
+            ttl = f" | Token: {'валиден' if valid else 'нет'}{f' (~{mins} мин)' if valid else ''}"
+            header = (
+                f"<b>Стратегия:</b> C\n"
+                f"<b>LLM:</b> {st['llm']}\n"
+                f"<b>Язык OCR:</b> {st['lang']}\n"
+                f"<b>Debug:</b> {'on' if st['debug'] else 'off'}{ttl}"
+            )
+            kb = kb_settings(query.from_user.id) if st.get("settings_open") else kb_main(query.from_user.id)
+            try:
+                await query.message.edit_text(header, reply_markup=kb, parse_mode=ParseMode.HTML)
+            except TelegramBadRequest as e:
+                logger.debug(f"edit_text skipped: {e}")
     await query.answer()
 
 
@@ -546,6 +573,19 @@ async def on_text(message: Message):
             await message.answer("Ключ для yandex сохранён локально. Формат поддерживается: <folder_id>:<api_key>.")
         else:
             await message.answer("Ключ для gigachat сохранён локально.")
+        return
+    
+    if st.pop("await_prompt", False):
+        prompt_text = (message.text or "").strip()
+        if prompt_text.lower() == "reset":
+            st.pop("custom_prompt", None)
+            await message.answer("Промт сброшен на значение по умолчанию.")
+        elif not prompt_text:
+            await message.answer("Пустой промт — отправьте непустой текст.")
+            return
+        else:
+            st["custom_prompt"] = prompt_text
+            await message.answer("Промт сохранён и будет использоваться для следующих запросов LLM.")
         return
 
 
