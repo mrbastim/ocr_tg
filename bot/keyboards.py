@@ -55,6 +55,32 @@ def kb_main(user_id: int) -> InlineKeyboardMarkup:
     )
 
 
+def get_prompt_label(strategy: str, custom_prompt: str = None) -> str:
+    """Получить текстовую метку текущего промта."""
+    if custom_prompt:
+        return f"Свой ({len(custom_prompt)} символов)"
+    
+    strategy_map = {
+        "weak": "Слабый",
+        "medium": "Средний",
+        "strong": "Сильный",
+    }
+    return strategy_map.get(strategy, "Неизвестный")
+
+
+def prompt_preview(strategy: str, custom_prompt: str = None) -> str:
+    """Получить полный текст промта для предпросмотра."""
+    if custom_prompt:
+        return custom_prompt
+    
+    prompts = {
+        "weak": "Исправить только явные опечатки и улучшить форматирование.",
+        "medium": "Исправить опечатки, улучшить пунктуацию и форматирование текста.",
+        "strong": "Полная коррекция: исправить все ошибки, улучшить пунктуацию, форматирование и читаемость текста.",
+    }
+    return prompts.get(strategy, prompts["strong"])
+
+
 def kb_llm_settings(user_id: int) -> InlineKeyboardMarkup:
     """Клавиатура настройки LLM (выбор провайдера, модели, ключей, промта)."""
     st = get_state(user_id)

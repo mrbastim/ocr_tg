@@ -12,7 +12,7 @@ from aiogram.exceptions import TelegramBadRequest
 
 from .api_client import API_DEBUG, API_LOG_FILE, api_login, api_register, api_key_status, api_set_key, api_clear_key, api_get_text_models
 from .user_keys import set_user_key, delete_user_key, get_all_user_keys
-from .keyboards import get_state, kb_main, kb_settings, kb_llm_settings, kb_models, token_status
+from .keyboards import get_state, kb_main, kb_settings, kb_llm_settings, kb_prompt_settings, kb_models, token_status, get_prompt_label, prompt_preview
 from .llm_service import run_ocr, run_llm_correction
 
 logger = logging.getLogger(__name__)
