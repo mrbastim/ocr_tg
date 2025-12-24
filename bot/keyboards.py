@@ -13,15 +13,17 @@ def get_state(user_id: int) -> Dict:
     st = _user_state.get(user_id)
     if not st:
         st = {
-            "strategy": "C",
+            "strategy": "strong",
             "lang": os.getenv("OCR_LANG", "rus"),
             "llm": os.getenv("LLM_PROVIDER", "gigachat"),
             "model": os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
             "debug": False,
             "settings_open": False,
             "llm_menu_open": False,
+            "prompt_settings_open": False,
             "has_gemini": False,
             "models_cache": {},  # Кэш доступных моделей для быстрого доступа
+            "custom_prompt": None,
         }
         _user_state[user_id] = st
     return st
@@ -70,6 +72,7 @@ def kb_llm_settings(user_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text=mark("Yandex", llm == "yandex"), callback_data="set_llm:yandex"),
             InlineKeyboardButton(text=mark("Gemini", llm in {"gemini", "api"}), callback_data="set_llm:gemini"),
         ],
+        [InlineKeyboardButton(text="🧠 Настройки промта", callback_data="open_prompt")],
     ]
     
     # Выбор модели только если выбран Gemini
@@ -185,5 +188,27 @@ def kb_models(user_id: int, models: Dict[str, dict]) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="⬅️ Назад", callback_data="close_models")
     ])
     
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def kb_prompt_settings(user_id: int, st: Dict) -> InlineKeyboardMarkup:
+    strategy = (st.get("strategy") or "strong").lower()
+
+    def mark(label: str, active: bool) -> str:
+        return f"{label}{' ✅' if active else ''}"
+
+    keyboard = [
+        [
+            InlineKeyboardButton(text=mark("Слабый", strategy == "weak"), callback_data="set_prompt:weak"),
+            InlineKeyboardButton(text=mark("Средний", strategy == "medium"), callback_data="set_prompt:medium"),
+        ],
+        [
+            InlineKeyboardButton(text=mark("Сильный", strategy == "strong"), callback_data="set_prompt:strong"),
+            InlineKeyboardButton(text=mark("Свой", strategy == "custom"), callback_data="set_prompt:custom"),
+        ],
+        [InlineKeyboardButton(text="👁 Посмотреть промт", callback_data="show_prompt")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="close_prompt")],
+    ]
+
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
