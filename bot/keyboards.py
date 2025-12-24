@@ -126,8 +126,8 @@ def kb_llm_settings(user_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text=f"➕ Добавить Gemini {'✅' if has_gemini else ''}", callback_data="set_key:gemini"),
             InlineKeyboardButton(text="➖ Удалить Gemini", callback_data="del_key:gemini"),
         ],
-        # Настройка промта
-        [InlineKeyboardButton(text="📝 Настройка промта", callback_data="set_prompt")],
+        # # Настройка промта
+        # [InlineKeyboardButton(text="📝 Настройка промта", callback_data="set_prompt")],
         # Назад в главные настройки
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="open_settings")],
     ])
