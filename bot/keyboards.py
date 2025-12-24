@@ -56,8 +56,13 @@ def kb_main(user_id: int) -> InlineKeyboardMarkup:
 
 
 def get_prompt_label(strategy: str, custom_prompt: str = None) -> str:
-    """Получить текстовую метку текущего промта."""
-    if custom_prompt:
+    """Получить текстовую метку текущего промта.
+
+    ВАЖНО: учитываем выбранную стратегию. "Свой" возвращаем только,
+    если активна стратегия "custom" и задан текст custom_prompt.
+    """
+    strat = (strategy or "strong").lower()
+    if strat == "custom" and custom_prompt:
         return f"Свой ({len(custom_prompt)} символов)"
     
     strategy_map = {
@@ -65,12 +70,17 @@ def get_prompt_label(strategy: str, custom_prompt: str = None) -> str:
         "medium": "Средний",
         "strong": "Сильный",
     }
-    return strategy_map.get(strategy, "Неизвестный")
+    return strategy_map.get(strat, "Сильный")
 
 
 def prompt_preview(strategy: str, custom_prompt: str = None) -> str:
-    """Получить полный текст промта для предпросмотра."""
-    if custom_prompt:
+    """Получить полный текст промта для предпросмотра.
+
+    Используем custom_prompt только при активной стратегии "custom".
+    Иначе показываем пресет выбранной стратегии.
+    """
+    strat = (strategy or "strong").lower()
+    if strat == "custom" and custom_prompt:
         return custom_prompt
     
     prompts = {
@@ -78,7 +88,7 @@ def prompt_preview(strategy: str, custom_prompt: str = None) -> str:
         "medium": "Исправить опечатки, улучшить пунктуацию и форматирование текста.",
         "strong": "Полная коррекция: исправить все ошибки, улучшить пунктуацию, форматирование и читаемость текста.",
     }
-    return prompts.get(strategy, prompts["strong"])
+    return prompts.get(strat, prompts["strong"])
 
 
 def kb_llm_settings(user_id: int) -> InlineKeyboardMarkup:
