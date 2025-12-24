@@ -114,6 +114,7 @@ def kb_llm_settings(user_id: int) -> InlineKeyboardMarkup:
     
     # Управление ключами
     keyboard.extend([
+        [InlineKeyboardButton(text="🔑 Управление ключами", callback_data="manage_keys_decoration")],
         [
             InlineKeyboardButton(text="➕ Добавить GigaChat", callback_data="set_key:gigachat"),
             InlineKeyboardButton(text="➖ Удалить GigaChat", callback_data="del_key:gigachat"),

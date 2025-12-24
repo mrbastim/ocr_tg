@@ -444,6 +444,9 @@ async def on_btn(query: CallbackQuery):
         await query.message.answer(
             "Отправьте свой промт для LLM или 'reset' чтобы использовать промт по умолчанию."
         )
+    elif data == "manage_keys_decoration":
+        pass  # Просто декоративная кнопка, ничего не делает
+    
 
     if edited:
         # Если открыто меню LLM, обновляем его; иначе обновляем основное меню
