@@ -19,6 +19,7 @@ def get_state(user_id: int) -> Dict:
             "model": os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
             "debug": False,
             "settings_open": False,
+            "llm_menu_open": False,
             "prompt_settings_open": False,
             "has_gemini": False,
             "models_cache": {},  # Кэш доступных моделей для быстрого доступа
@@ -54,36 +55,28 @@ def kb_main(user_id: int) -> InlineKeyboardMarkup:
     )
 
 
-def kb_settings(user_id: int) -> InlineKeyboardMarkup:
+def kb_llm_settings(user_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура настройки LLM (выбор провайдера, модели, ключей, промта)."""
     st = get_state(user_id)
     llm = st["llm"]
-    lang = st["lang"]
-    debug = st["debug"]
     has_gemini = bool(st.get("has_gemini"))
     current_model = st.get("model", "gemini-2.5-flash")
 
     def mark(label: str, active: bool) -> str:
         return f"{label}{' ✅' if active else ''}"
 
-    valid, _ = token_status(user_id)
-    login_text = "🔐 Вход ✅" if valid else "🔐 Вход"
-
     keyboard = [
+        # Выбор провайдера LLM
         [
-            InlineKeyboardButton(text=mark("LLM: GigaChat", llm == "gigachat"), callback_data="set_llm:gigachat"),
-            InlineKeyboardButton(text=mark("LLM: Yandex", llm == "yandex"), callback_data="set_llm:yandex"),
-        ],
-        [
-            InlineKeyboardButton(
-                text=mark("LLM: Gemini", llm in {"gemini", "api"}), callback_data="set_llm:gemini"
-            ),
+            InlineKeyboardButton(text=mark("GigaChat", llm == "gigachat"), callback_data="set_llm:gigachat"),
+            InlineKeyboardButton(text=mark("Yandex", llm == "yandex"), callback_data="set_llm:yandex"),
+            InlineKeyboardButton(text=mark("Gemini", llm in {"gemini", "api"}), callback_data="set_llm:gemini"),
         ],
         [InlineKeyboardButton(text="🧠 Настройки промта", callback_data="open_prompt")],
     ]
     
-    # Добавляем кнопку выбора модели только если выбран Gemini
+    # Выбор модели только если выбран Gemini
     if llm in {"gemini", "api"}:
-        # Показываем текущую модель и кнопку для её изменения
         models_cache = st.get("models_cache", {})
         display_model = models_cache.get(current_model, {}).get("display_name", current_model)
         keyboard.append([
@@ -93,38 +86,58 @@ def kb_settings(user_id: int) -> InlineKeyboardMarkup:
             ),
         ])
     
+    # Управление ключами
     keyboard.extend([
         [
-            InlineKeyboardButton(text=mark("Язык: RU", lang == "rus"), callback_data="set_lang:rus"),
-            InlineKeyboardButton(text=mark("Язык: EN", lang == "eng"), callback_data="set_lang:eng"),
+            InlineKeyboardButton(text="➕ Добавить GigaChat", callback_data="set_key:gigachat"),
+            InlineKeyboardButton(text="➖ Удалить GigaChat", callback_data="del_key:gigachat"),
+        ],
+        [
+            InlineKeyboardButton(text="➕ Добавить Yandex", callback_data="set_key:yandex"),
+            InlineKeyboardButton(text="➖ Удалить Yandex", callback_data="del_key:yandex"),
+        ],
+        [
+            InlineKeyboardButton(text=f"➕ Добавить Gemini {'✅' if has_gemini else ''}", callback_data="set_key:gemini"),
+            InlineKeyboardButton(text="➖ Удалить Gemini", callback_data="del_key:gemini"),
+        ],
+        # Настройка промта
+        [InlineKeyboardButton(text="📝 Настройка промта", callback_data="set_prompt")],
+        # Назад в главные настройки
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="open_settings")],
+    ])
+
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def kb_settings(user_id: int) -> InlineKeyboardMarkup:
+    st = get_state(user_id)
+    lang = st["lang"]
+    debug = st["debug"]
+
+    def mark(label: str, active: bool) -> str:
+        return f"{label}{' ✅' if active else ''}"
+
+    valid, _ = token_status(user_id)
+    login_text = "🔐 Вход ✅" if valid else "🔐 Вход"
+
+    keyboard = [
+        # Подраздел настройки LLM
+        [InlineKeyboardButton(text="⚙️ Настройка LLM", callback_data="open_llm_settings")],
+        # Выбор языка
+        [
+            InlineKeyboardButton(text=mark("RU", lang == "rus"), callback_data="set_lang:rus"),
+            InlineKeyboardButton(text=mark("EN", lang == "eng"), callback_data="set_lang:eng"),
             InlineKeyboardButton(
-                text=mark("Язык: RU+EN", lang == "rus+eng"), callback_data="set_lang:rus+eng"
+                text=mark("RU+EN", lang == "rus+eng"), callback_data="set_lang:rus+eng"
             ),
         ],
         [InlineKeyboardButton(text=mark("Debug", debug), callback_data="toggle_debug")],
-        [
-            InlineKeyboardButton(text="🔑 Ключ GigaChat", callback_data="set_key:gigachat"),
-            InlineKeyboardButton(text="🔑 Ключ Yandex", callback_data="set_key:yandex"),
-        ],
-        [
-            InlineKeyboardButton(
-                text=f"🔑 Ключ Gemini {'✅' if has_gemini else '❌'}",
-                callback_data="set_key:gemini",
-            ),
-        ],
-        [
-            InlineKeyboardButton(text="❌ Удалить GigaChat", callback_data="del_key:gigachat"),
-            InlineKeyboardButton(text="❌ Удалить Yandex", callback_data="del_key:yandex"),
-        ],
-        [
-            InlineKeyboardButton(text="❌ Удалить Gemini", callback_data="del_key:gemini"),
-        ],
         [
             InlineKeyboardButton(text="📝 Регистрация", callback_data="do_register"),
             InlineKeyboardButton(text=login_text, callback_data="do_login"),
         ],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="close_settings")],
-    ])
+    ]
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
