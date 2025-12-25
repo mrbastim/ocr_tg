@@ -26,8 +26,10 @@ pip install -r requirements.txt
 python bot/bot.py --ocr-only --image "dataset_mini/sample.jpg" --lang rus
 ```
 
-### 5) Настройка LLM (GigaChat)
+### 5) Настройка LLM (GigaChat/Gemini/Local)
 - Получите API ключ и сохраните как переменную окружения `GIGACHAT_API_KEY`.
+- Для Gemini используйте переменные `AI_API_BASE/AI_API_USER/AI_API_PASS` или `GEMINI_API_KEY`.
+- Для локальной LLM через Ollama (qwen2:1.5b по умолчанию) задайте `LOCAL_LLM_MODEL` и, при необходимости, `LOCAL_LLM_MAX_CHARS`.
 - В `bot/bot.py` добавлены заготовки промптов (A/B/C).
 
 ### 6) Запуск Telegram-бота

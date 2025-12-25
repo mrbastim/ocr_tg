@@ -83,6 +83,71 @@ def prompt_preview(strategy: str, custom_prompt: Optional[str] = None) -> str:
     return build_prompt(sample, strategy=strategy, custom_prompt=custom_prompt)
 
 
+def _chunk_text(text: str, max_chars: int) -> list[str]:
+    """Разбить текст на куски не длиннее max_chars.
+
+    Логика соответствует описанию бэкенда: сначала по абзацам, затем по предложениям.
+    """
+    if max_chars <= 0:
+        return [text]
+    if len(text) <= max_chars:
+        return [text]
+
+    chunks: list[str] = []
+
+    def split_units(units: list[str], separator: str) -> list[str]:
+        buf: list[str] = []
+        current = []
+        current_len = 0
+        for u in units:
+            if not u:
+                continue
+            seg_len = len(u)
+            overhead = len(separator) if current else 0
+
+            # Если единица сама по себе больше лимита — дробим по max_chars
+            if seg_len >= max_chars:
+                if current:
+                    buf.append("".join(current))
+                    current = []
+                    current_len = 0
+                remainder = u
+                while remainder:
+                    buf.append(remainder[:max_chars])
+                    remainder = remainder[max_chars:]
+                continue
+
+            if current_len + overhead + seg_len <= max_chars:
+                if overhead:
+                    current.append(separator)
+                    current_len += overhead
+                current.append(u)
+                current_len += seg_len
+            else:
+                if current:
+                    buf.append("".join(current))
+                current = [u]
+                current_len = seg_len
+        if current:
+            buf.append("".join(current))
+        return buf
+
+    # 1) абзацы
+    paragraphs = text.split("\n\n")
+    first_pass = split_units(paragraphs, "\n\n")
+
+    # 2) если после абзацев всё ещё длинно — предложения
+    for part in first_pass:
+        if len(part) <= max_chars:
+            chunks.append(part)
+            continue
+        sentences = part.split(". ")
+        second_pass = split_units(sentences, ". ")
+        chunks.extend(second_pass)
+
+    return chunks or [text]
+
+
 def gigachat_complete(prompt: str, api_key: Optional[str] = None) -> str:
     if not GIGACHAT_AVAILABLE:
         return f"[LLM SDK NOT INSTALLED]\nInstall: pip install gigachat\n\n{prompt[:200]}..."
@@ -213,9 +278,27 @@ def run_llm_correction(
     model_name: Optional[str] = None,
     custom_prompt: Optional[str] = None,
 ) -> str:
-    prompt = build_prompt(text, strategy=strategy, custom_prompt=custom_prompt)
     llm_choice = (llm or os.getenv("LLM_PROVIDER", "gigachat")).lower()
     force_local_gemini = os.getenv("GEMINI_LOCAL", "0").lower() in {"1", "true", "yes"}
+
+    if llm_choice == "local":
+        model_to_use = model_name or os.getenv("LOCAL_LLM_MODEL", "qwen2:1.5b")
+        try:
+            max_chars = int(os.getenv("LOCAL_LLM_MAX_CHARS", "10000"))
+        except ValueError:
+            max_chars = 10000
+
+        # Если текст большой, режем на части — сервер также режет, но подстрахуемся
+        chunks = _chunk_text(text, max_chars)
+        parts = []
+        for chunk in chunks:
+            chunk_prompt = build_prompt(chunk, strategy=strategy, custom_prompt=custom_prompt)
+            parts.append(
+                external_api_complete(chunk_prompt, tg_id=user_id, username=username, model=model_to_use)
+            )
+        return "\n\n".join(parts)
+
+    prompt = build_prompt(text, strategy=strategy, custom_prompt=custom_prompt)
 
     if llm_choice in {"gemini", "api", "gemini_api", "external"}:
         if API_BASE and not force_local_gemini:

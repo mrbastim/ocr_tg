@@ -16,7 +16,8 @@ def get_state(user_id: int) -> Dict:
             "strategy": "strong",
             "lang": os.getenv("OCR_LANG", "rus"),
             "llm": os.getenv("LLM_PROVIDER", "gigachat"),
-            "model": os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+            # Модель может быть как облачной (Gemini), так и локальной (Ollama)
+            "model": os.getenv("LOCAL_LLM_MODEL") or os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
             "debug": False,
             "settings_open": False,
             "llm_menu_open": False,
@@ -107,11 +108,12 @@ def kb_llm_settings(user_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text=mark("GigaChat", llm == "gigachat"), callback_data="set_llm:gigachat"),
             InlineKeyboardButton(text=mark("Yandex", llm == "yandex"), callback_data="set_llm:yandex"),
             InlineKeyboardButton(text=mark("Gemini", llm in {"gemini", "api"}), callback_data="set_llm:gemini"),
+            InlineKeyboardButton(text=mark("Local", llm == "local"), callback_data="set_llm:local"),
         ],
         [InlineKeyboardButton(text="🧠 Настройки промта", callback_data="open_prompt")],
     ]
     
-    # Выбор модели только если выбран Gemini
+    # Выбор модели: для Gemini подтягиваем список с бэкенда, для local даём ручной ввод
     if llm in {"gemini", "api"}:
         models_cache = st.get("models_cache", {})
         display_model = models_cache.get(current_model, {}).get("display_name", current_model)
@@ -120,6 +122,13 @@ def kb_llm_settings(user_id: int) -> InlineKeyboardMarkup:
                 text=f"🤖 Модель: {display_model}", 
                 callback_data="select_model"
             ),
+        ])
+    elif llm == "local":
+        keyboard.append([
+            InlineKeyboardButton(
+                text=f"🤖 Модель (local): {current_model}",
+                callback_data="enter_local_model",
+            )
         ])
     
     # Управление ключами

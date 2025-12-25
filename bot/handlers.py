@@ -94,14 +94,17 @@ async def cmd_llm(message: Message):
     logger.debug(f"/llm from={message.from_user.id} text={message.text}")
     args = (message.text or "").split()
     if len(args) < 2:
-        await message.answer("Укажите LLM: gigachat | gemini | yandex | api")
+        await message.answer("Укажите LLM: gigachat | gemini | yandex | api | local")
         return
     llm = args[1].lower()
-    if llm not in {"gigachat", "gemini", "yandex", "api"}:
-        await message.answer("Допустимые значения: gigachat, gemini, yandex, api")
+    if llm not in {"gigachat", "gemini", "yandex", "api", "local"}:
+        await message.answer("Допустимые значения: gigachat, gemini, yandex, api, local")
         return
     st = get_state(message.from_user.id)
     st["llm"] = "api" if llm == "gemini" else llm
+    # Для локальной LLM сразу подставляем значение по умолчанию
+    if st["llm"] == "local":
+        st["model"] = os.getenv("LOCAL_LLM_MODEL", "qwen2:1.5b")
     await message.answer(f"LLM провайдер установлен: {st['llm']}", reply_markup=kb_main(message.from_user.id))
 
 
@@ -273,8 +276,10 @@ async def on_btn(query: CallbackQuery):
     elif data.startswith("set_llm:"):
         _, val = data.split(":", 1)
         llm = val.lower()
-        if llm in {"gigachat", "gemini", "yandex"}:
+        if llm in {"gigachat", "gemini", "yandex", "local"}:
             st["llm"] = "api" if llm == "gemini" else llm
+            if st["llm"] == "local":
+                st["model"] = os.getenv("LOCAL_LLM_MODEL", "qwen2:1.5b")
             edited = True
     elif data.startswith("set_lang:"):
         _, val = data.split(":", 1)
@@ -419,6 +424,13 @@ async def on_btn(query: CallbackQuery):
             # Возвращаемся в настройки
             st["settings_open"] = True
             edited = True
+    elif data == "enter_local_model":
+        st["await_local_model"] = True
+        await query.message.answer(
+            "Отправьте название локальной модели (пример: qwen2:1.5b). Оно будет использовано в запросе к /user/ai/text."
+        )
+        await query.answer()
+        return
     elif data == "close_models":
         # Возвращаемся в настройки
         st["settings_open"] = True
@@ -667,6 +679,15 @@ async def on_text(message: Message):
             await message.answer("Ключ для yandex сохранён локально. Формат поддерживается: <folder_id>:<api_key>.")
         else:
             await message.answer("Ключ для gigachat сохранён локально.")
+        return
+
+    if st.pop("await_local_model", False):
+        model_name = (message.text or "").strip()
+        if not model_name:
+            await message.answer("Название модели пустое. Отправьте, например, qwen2:1.5b.")
+            return
+        st["model"] = model_name
+        await message.answer(f"Локальная модель установлена: {model_name}")
         return
     
     if st.pop("await_prompt", False):
