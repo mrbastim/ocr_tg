@@ -234,8 +234,8 @@ def yandexgpt_complete(prompt: str, api_key: Optional[str] = None, folder_id: Op
         return f"[LLM ERROR] {e}\n\n[LLM OUTPUT MOCK]\n{prompt[:200]}..."
 
 
-def external_api_complete(prompt: str, tg_id: int, username: str, model: Optional[str] = None) -> str:
-    return api_ask_text(prompt, tg_id=tg_id, username=username, model=model)
+def external_api_complete(prompt: str, tg_id: int, username: str, model: Optional[str] = None, timeout: Optional[float] = 30) -> str:
+    return api_ask_text(prompt, tg_id=tg_id, username=username, model=model, timeout=timeout)
 
 
 def _ensure_gemini_key(tg_id: int, username: str) -> bool:
@@ -294,7 +294,13 @@ def run_llm_correction(
         for chunk in chunks:
             chunk_prompt = build_prompt(chunk, strategy=strategy, custom_prompt=custom_prompt)
             parts.append(
-                external_api_complete(chunk_prompt, tg_id=user_id, username=username, model=model_to_use)
+                external_api_complete(
+                    chunk_prompt,
+                    tg_id=user_id,
+                    username=username,
+                    model=model_to_use,
+                    timeout=None,  # снимаем таймаут для локальной модели
+                )
             )
         return "\n\n".join(parts)
 

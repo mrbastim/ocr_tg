@@ -147,7 +147,7 @@ def _ensure_jwt(tg_id: int, username: str) -> Optional[str]:
     return API_JWT_BY_USER.get(tg_id)
 
 
-def api_ask_text(prompt: str, tg_id: int, username: str, model: Optional[str] = None) -> str:
+def api_ask_text(prompt: str, tg_id: int, username: str, model: Optional[str] = None, timeout: Optional[float] = 30) -> str:
     if not API_BASE:
         _api_log("ask_skip", reason="no_base")
         return "[API NOT CONFIGURED] Set AI_API_BASE, AI_API_USER, AI_API_PASS"
@@ -163,7 +163,7 @@ def api_ask_text(prompt: str, tg_id: int, username: str, model: Optional[str] = 
     _api_log("ask_request", url=url, body=payload.decode("utf-8"), model=model)
     req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) if timeout is not None else urllib.request.urlopen(req) as resp:
             body_raw = resp.read().decode("utf-8")
             _api_log("ask_raw_response", status=getattr(resp, "status", None), body=body_raw)
             try:
@@ -191,7 +191,7 @@ def api_ask_text(prompt: str, tg_id: int, username: str, model: Optional[str] = 
                 headers["Authorization"] = f"Bearer {jwt}"
                 req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
                 try:
-                    with urllib.request.urlopen(req, timeout=30) as resp2:
+                    with urllib.request.urlopen(req, timeout=timeout) if timeout is not None else urllib.request.urlopen(req) as resp2:
                         body_raw = resp2.read().decode("utf-8")
                         _api_log("ask_raw_response_retry", status=getattr(resp2, "status", None), body=body_raw)
                         try:
